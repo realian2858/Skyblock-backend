@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SkyBlock Auction Toolkit</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">◆</div>
+      <div class="brand-text">
+        <h1>SkyBlock Auction Toolkit</h1>
+        <p>Fast taxes, clean lowball math, and strict market echoes.</p>
+      </div>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="browse">
+      <div class="browse-title">AUCTION TOOLKIT</div>
+      <div class="browse-tabs" role="tablist" aria-label="Calculator Views">
+        <button class="tab active" type="button" data-view="basics" role="tab" aria-selected="true">Basics</button>
+        <button class="tab" type="button" data-view="advanced" role="tab" aria-selected="false">Advanced</button>
+      </div>
+    </section>
+
+    <section class="grid">
+      <aside class="col-left">
+        <div class="card">
+          <div class="card-head">
+            <h2>Quick Jump</h2>
+            <span class="pill">nav</span>
+          </div>
+
+          <div class="subcard">
+            <div class="subcard-head">
+              <h3>Modes</h3>
+              <span class="subtle">Switch instantly</span>
+            </div>
+
+            <button type="button" class="btn btn-primary btn-wide js-nav" data-view="basics">
+              Basics (Sell + Lowball)
+            </button>
+            <button type="button" class="btn btn-wide js-nav" data-view="advanced" style="margin-top:10px;">
+              Advanced (Recommend)
+            </button>
+
+            <div class="hint" style="margin-top:10px;">Tip: The tabs up top do the same thing.</div>
+          </div>
+
+          <div class="subcard">
+            <div class="subcard-head">
+              <h3>Status</h3>
+              <span class="subtle">UI</span>
+            </div>
+            <div class="metric">
+              <div class="metric-label">Current View</div>
+              <div class="metric-value" id="activeViewLabel">Basics</div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <section class="col-right">
+
+        <section id="view-basics" class="view active" aria-label="Basics View">
+          <div class="card">
+            <div class="card-head">
+              <h2>Basics</h2>
+              <span class="pill">fast</span>
+            </div>
+
+            <div class="basics-grid">
+              <div class="subcard">
+                <div class="subcard-head">
+                  <h3>Sell Calculator</h3>
+                  <span class="subtle">Tax + take-home</span>
+                </div>
+
+                <label for="sellPrice">Sell Price</label>
+                <input type="text" id="sellPrice" placeholder="e.g. 1m" />
+
+                <button id="calcBtn" type="button" class="btn btn-primary">Calculate</button>
+
+                <div class="result-stack">
+                  <div class="result-line" id="taxResult">—</div>
+                  <div class="result-line" id="profitResult">—</div>
+                </div>
+              </div>
+
+              <div class="subcard">
+                <div class="subcard-head">
+                  <h3>Lowball Calculator</h3>
+                  <span class="subtle">Profit + break-even</span>
+                </div>
+
+                <div class="row-2">
+                  <div>
+                    <label for="purchasePrice">Bought for</label>
+                    <input type="text" id="purchasePrice" placeholder="e.g. 100m" />
+                  </div>
+                  <div>
+                    <label for="sellPriceLow">Selling at</label>
+                    <input type="text" id="sellPriceLow" placeholder="e.g. 120m" />
+                  </div>
+                </div>
+
+                <button id="lowballBtn" type="button" class="btn">Calculate</button>
+
+                <div class="result-stack">
+                  <div class="result-line" id="lowballProfitResult">—</div>
+
+                  <div class="break-card">
+                    <div class="break-title">Break-even</div>
+                    <div class="break-value" id="breakEvenResult">—</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <h2>Monthly Tracker</h2>
+              <span class="pill pill-alt">profit</span>
+            </div>
+
+            <div class="subcard">
+              <button id="saveDealBtn" type="button" class="btn btn-ghost" style="display:none;">
+                + Save This Deal
+              </button>
+
+              <div class="metric">
+                <div class="metric-label">Total Monthly Profit</div>
+                <div class="metric-value" id="totalMonthlyProfit">0 coins</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="view-advanced" class="view" aria-label="Advanced View">
+          <div class="card card-hero">
+            <div class="card-head">
+              <h2>Advanced</h2>
+              <span class="pill pill-hero">pro</span>
+            </div>
+
+            <div class="adv-split">
+              <section class="adv-panel adv-input" aria-label="Modifiers">
+                <div class="adv-panel-head">
+                  <div class="adv-panel-title">Modifiers</div>
+                  <div class="adv-panel-sub">Stricter inputs → cleaner echoes.</div>
+                </div>
+
+                <div class="hero-row hero-row-3">
+                  <div class="field">
+                    <label for="advItem">Item</label>
+                    <div class="suggest-wrap">
+                      <input type="text" id="advItem" placeholder="e.g. Dark Claymore" autocomplete="off" />
+                      <div class="mod-suggest" id="itemSuggest" style="display:none;"></div>
+                    </div>
+                    <div class="hint">Type, then click a suggestion.</div>
+                  </div>
+
+                  <div class="field">
+                    <label for="advStars10">Stars (0–10)</label>
+                    <div class="range-row">
+                      <input id="advStars10" type="range" min="0" max="10" step="1" value="0" />
+                      <div class="range-value" id="advStars10Value">0</div>
+                      <button type="button" class="btn-icon" id="advStars10Clear" title="Reset stars">↺</button>
+                    </div>
+                  </div>
+
+                  <div class="field">
+                    <label for="advRarity">Rarity (optional)</label>
+                    <select id="advRarity">
+                      <option value="">Any</option>
+                      <option value="common">Common</option>
+                      <option value="uncommon">Uncommon</option>
+                      <option value="rare">Rare</option>
+                      <option value="epic">Epic</option>
+                      <option value="legendary">Legendary</option>
+                      <option value="mythic">Mythic</option>
+                      <option value="divine">Divine</option>
+                      <option value="special">Special</option>
+                      <option value="very special">Very Special</option>
+                    </select>
+                    <div class="hint">Used for strict recommendations.</div>
+                  </div>
+                </div>
+                
+                <div class="field">
+  <label for="advPetItem">Pet Item (optional)</label>
+
+  <div class="select-wrap">
+    <input id="advPetItem" type="text" placeholder="Start typing a pet item..." autocomplete="off" />
+  </div>
+
+  <div id="petItemSuggest" class="suggest-box" style="display:none;"></div>
+</div>
+
+
+                <div class="hero-row hero-row-1" id="wiRow">
+                  <label class="toggle">
+                    <input type="checkbox" id="advWI" />
+                    <span class="toggle-ui" aria-hidden="true"></span>
+                    <span class="toggle-text">Wither Impact (Implosion + Warp + Shield)</span>
+                  </label>
+                </div>
+
+                <div class="hero-row hero-row-2">
+                  <div class="field">
+                    <label for="advEnchants">Enchants</label>
+                    <div class="suggest-wrap">
+                      <input type="text" id="advEnchants" placeholder="Start typing: chim → Chimera 5" autocomplete="off" />
+                      <div class="mod-suggest" id="enchSuggest" style="display:none;"></div>
+                    </div>
+                    <div class="hint">Comma-separated is OK.</div>
+
+                    <label for="advDye" style="margin-top:16px;">Dye (optional)</label>
+                    <div class="suggest-wrap">
+                      <input type="text" id="advDye" placeholder="e.g. Necron Dye" autocomplete="off" />
+                      <div class="mod-suggest" id="dyeSuggest" style="display:none;"></div>
+                    </div>
+
+                    <label for="advSkin" style="margin-top:16px;">Helmet Skin (optional)</label>
+                    <div class="suggest-wrap">
+                      <input type="text" id="advSkin" placeholder="e.g. True Warden Skin" autocomplete="off" />
+                      <div class="mod-suggest" id="skinSuggest" style="display:none;"></div>
+                    </div>
+
+                    <label for="advPetLevel" style="margin-top:16px;">Pet Level (optional)</label>
+                    <input type="text" id="advPetLevel" placeholder="1–100 (1–200 for G-Drag)" inputmode="numeric" autocomplete="off" />
+
+                    <label for="advPetSkin" style="margin-top:16px;">Pet Skin (optional)</label>
+                    <div class="suggest-wrap">
+                      <input type="text" id="advPetSkin" placeholder="Start typing a pet skin…" autocomplete="off" />
+                      <div class="mod-suggest" id="petSkinSuggest" style="display:none;"></div>
+                    </div>
+                  </div>
+
+                  <div class="field field-actions">       
+                    <button id="advBtn" type="button" class="btn btn-primary btn-wide">Get Recommendation</button>
+                  </div>
+                </div>
+
+                <div class="results">
+                  <div class="result-card">
+                    <div class="result-title">Recommendation</div>
+                    <div class="result-pre" id="advOut">—</div>
+                  </div>
+                </div>
+                
+              </section>
+
+              <aside class="adv-panel adv-examples" aria-label="Market Echoes">
+                <div class="adv-panel-head">
+                  <div class="adv-panel-title">Market Echoes</div>
+                  <div class="adv-panel-sub">Your 3 closest matches.</div>
+                </div>
+
+                <div class="top3-grid" id="top3Rail"></div>
+              </aside>
+            </div>
+          </div>
+        </section>
+
+        <footer class="footer">
+          <span class="muted">Designed for quick flips and strict comparisons.</span>
+        </footer>
+      </section>
+    </section>
+  </main>
+
+  <script src="script.js" defer></script>
+</body>
+</html>
