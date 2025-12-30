@@ -10,6 +10,11 @@
 // ✅ Backfill sales.item_key lightly
 // ✅ Runs ONCE then exits (Cloud Run Job friendly)
 //
+// ✅ FIX (circle-stars -> signature + key correctness):
+//    - itemNameLooksStarred now detects ○◉◎◍ as well
+//    - canonicalItemKey is computed from a star-stripped name so starred names don’t fragment item_key
+//    - buildSignature gets a normalized name where circle-stars are converted to ✪ and weird digits normalized
+//
 // Env required:
 // - DATABASE_URL
 // - HYPIXEL_API_KEY
@@ -97,6 +102,50 @@ function nonEmptyText(x) {
 }
 
 /* =========================
+   Display cleaning + weird digit normalization (local)
+========================= */
+const DIGIT_CHAR_MAP = (() => {
+  const map = new Map();
+  const addRange = (startDigit, chars) => {
+    for (let i = 0; i < chars.length; i++) map.set(chars[i], String(startDigit + i));
+  };
+  addRange(0, "⓪①②③④⑤⑥⑦⑧⑨");
+  addRange(0, "０１２３４５６７８９");
+  addRange(1, "➊➋➌➍➎➏➐➑➒➓");
+  addRange(1, "❶❷❸❹❺❻❼❽❾❿");
+  addRange(1, "⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾");
+  addRange(0, "⁰¹²³⁴⁵⁶⁷⁸⁹");
+  addRange(0, "₀₁₂₃₄₅₆₇₈₉");
+  return map;
+})();
+
+function normalizeWeirdDigits(s) {
+  const x = String(s || "").normalize("NFKD");
+  let out = "";
+  for (const ch of x) out += DIGIT_CHAR_MAP.get(ch) ?? ch;
+  return out;
+}
+
+function stripStarGlyphs(s) {
+  return String(s || "")
+    .replace(/[✪★☆✯✰●⬤•○◉◎◍]+/g, "")
+    .replace(/\s*(?:[➊➋➌➍➎➏➐➑➒➓❶❷❸❹❺❻❼❽❾❿⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾①②③④⑤⑥⑦⑧⑨⓪0-9])\s*$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// make name "parseLore-friendly": circle-stars -> ✪ and normalize digits
+function normalizeNameForSignature(itemName) {
+  let s = String(itemName || "");
+  s = normalizeWeirdDigits(s);
+  // convert circle-stars to ✪ so coflnet parsing sees them
+  s = s.replace(/[●⬤•○◉◎◍]/g, "✪");
+  // keep existing star glyphs as ✪
+  s = s.replace(/[★☆✯✰]/g, "✪");
+  return s;
+}
+
+/* =========================
    Star presence heuristic (Coflnet-style)
    If item_name contains ✪/★/● or dingbat/circled digits,
    we should build a signature even without bytes/lore.
@@ -106,7 +155,7 @@ function itemNameLooksStarred(itemName) {
   if (!s) return false;
 
   // star/circle-star glyphs
-  if (/[✪★☆✯✰●⬤•]/.test(s)) return true;
+  if (/[✪★☆✯✰●⬤•○◉◎◍]/.test(s)) return true;
 
   // dingbat/circled/superscript digits commonly used for master stars addon
   if (/[➊➋➌➍➎➏➐➑➒➓⓪①②③④⑤⑥⑦⑧⑨❶❷❸❹❺❻❼❽❾❿⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉]/.test(s))
@@ -147,7 +196,8 @@ async function upsertAuctionsBulk(list, now) {
     if (!uuid) continue;
 
     const itemName = a.item_name || "";
-    const itemKey = canonicalItemKey(itemName) || null;
+    // ✅ prevent starred names from fragmenting item_key
+    const itemKey = canonicalItemKey(stripStarGlyphs(itemName)) || null;
 
     const bin = !!a.bin;
     const start_ts = Number(a.start || 0);
@@ -165,7 +215,8 @@ async function upsertAuctionsBulk(list, now) {
     let sig = null;
     if (shouldBuildSig) {
       sig = await safeBuildSignature({
-        itemName,
+        // ✅ normalize circle-stars so parseLore can compute stars10 correctly
+        itemName: normalizeNameForSignature(itemName),
         lore: lore || "",
         tier: tier || "",
         itemBytes: bytes || "",
@@ -369,7 +420,9 @@ async function finalizeEnded(now) {
 
     for (const r of rows) {
       const price = Number(r.bin ? r.starting_bid : r.highest_bid) || 0;
-      const itemKey = r.item_key || canonicalItemKey(r.item_name || "") || null;
+
+      // ✅ item_key should not depend on stars embedded in name
+      const itemKey = r.item_key || canonicalItemKey(stripStarGlyphs(r.item_name || "")) || null;
 
       // ✅ build sig even for starred names (some ended auctions have no lore/bytes stored)
       const shouldBuildSig =
@@ -382,7 +435,8 @@ async function finalizeEnded(now) {
         (r.signature && String(r.signature).trim()) ||
         (shouldBuildSig
           ? await safeBuildSignature({
-              itemName: r.item_name || "",
+              // ✅ normalize circle-stars so parseLore can compute stars10 correctly
+              itemName: normalizeNameForSignature(r.item_name || ""),
               lore: (r.item_lore || "").toString(),
               tier: r.tier || "",
               itemBytes: (r.item_bytes || "").toString(),
@@ -441,7 +495,7 @@ async function backfillSalesItemKeys({ batch = SALES_KEY_BACKFILL_BATCH } = {}) 
 
     let updated = 0;
     for (const r of rows) {
-      const k = canonicalItemKey(r.item_name || "");
+      const k = canonicalItemKey(stripStarGlyphs(r.item_name || ""));
       if (!k) continue;
       await client.query(upd, [r.uuid, k]);
       updated++;
