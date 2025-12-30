@@ -558,7 +558,7 @@ function extractCosmetics(extra) {
 
 function extractWitherImpactFlag(itemName, rootParsed) {
   const key = canonicalItemKey(itemName);
-  const isBlade = ["hyperion", "astraea", "scylla", "valkyrie"].some((w) => key.includes(w));
+  const isBlade = ["hyperion", "Hyperion", "astraea", "Astraea", "scylla", "Scylla", "valkyrie", "Valkyrie"].some((w) => key.includes(w));
   if (!isBlade) return false;
 
   const s = JSON.stringify(unwrap(rootParsed) || {});
@@ -601,3 +601,4 @@ export async function buildSignature({ itemName = "", lore = "", tier = "", item
 
   return [...parts, ...enchTokens].join("|");
 }
+
