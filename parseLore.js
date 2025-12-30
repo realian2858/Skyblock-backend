@@ -75,33 +75,45 @@ const STAR_RE = /[✪★☆✯✰]/g;
 
 // returns 0..10
 export function coflnetStars10FromText(text) {
-  const s = normalizeWeirdDigits(String(text ?? ""));
+  const s = normalizeWeirdDigits(String(text ?? "")).normalize("NFKC");
   if (!s) return 0;
 
-  // Count star glyphs (cap at 5 because coflnet uses 5 + digit)
-  const starCount = Math.min(5, (s.match(STAR_RE) || []).length);
+  // count star glyphs
+  const starMatches = s.match(/[✪★☆✯✰]/g) || [];
+  const starCount = Math.min(5, starMatches.length);
 
-  // Look for a trailing digit after the last star run.
-  // Often appears as "...✪✪✪✪✪3" or "...✪✪✪✪✪ 3"
-  let extra = 0;
-  if (starCount > 0) {
-    const lastStarIdx = Math.max(s.lastIndexOf("✪"), s.lastIndexOf("★"), s.lastIndexOf("☆"), s.lastIndexOf("✯"), s.lastIndexOf("✰"));
-    if (lastStarIdx >= 0) {
-      const tail = s.slice(lastStarIdx + 1).replace(/[^0-9]/g, "");
-      if (tail) {
-        const n = Number(tail[0]);
-        // only 1..5 is valid “master digit”
-        if (Number.isFinite(n) && n >= 1 && n <= 5) extra = n;
+  if (starCount === 0) return 0;
+
+  // IMPORTANT: Only use digit add-on if base stars == 5
+  // Find the substring after the last star and grab first digit
+  if (starCount === 5) {
+    const lastStar = Math.max(
+      s.lastIndexOf("✪"),
+      s.lastIndexOf("★"),
+      s.lastIndexOf("☆"),
+      s.lastIndexOf("✯"),
+      s.lastIndexOf("✰")
+    );
+
+    if (lastStar >= 0) {
+      // allow random symbols/spaces between stars and the digit
+      const tail = s.slice(lastStar + 1);
+      const m = tail.match(/(\d)/); // after normalizeWeirdDigits, ➎ becomes "5"
+      if (m) {
+        const d = Number(m[1]);
+        if (Number.isFinite(d) && d >= 1 && d <= 5) {
+          return 5 + d; // ✪✪✪✪✪➎ => 10
+        }
       }
     }
+    // If no digit found, it's just 5
+    return 5;
   }
 
-  // Coflnet rule: if you have 5 base stars, digit adds (master stars)
-  // If <5 stars, digit is usually NOT used; we ignore it.
-  const total = starCount === 5 ? (5 + extra) : starCount;
-
-  return Math.max(0, Math.min(10, total));
+  // If less than 5 stars, total is just the stars
+  return starCount;
 }
+
 
 /* =========================
    Unicode variant stripping (for item key)
@@ -547,31 +559,31 @@ function extractEnchants(extra) {
 
 // ✅ Prefer true NBT if present; else fallback to coflnet text parsing.
 function extractStars(extra, itemName, loreRaw) {
-  const d = Number(extra?.dungeon_item_level ?? 0);
   const u = Number(extra?.upgrade_level ?? 0);
+  const d = Number(extra?.dungeon_item_level ?? 0);
 
-  // If upgrade_level is valid, interpret it into dstars/mstars
+  // Prefer NBT if it exists
   if (Number.isFinite(u) && u > 0) {
     const total = Math.max(0, Math.min(10, Math.trunc(u)));
     if (total <= 5) return { dstars: total, mstars: 0 };
     return { dstars: 5, mstars: total - 5 };
   }
 
-  // Else dungeon_item_level only
   if (Number.isFinite(d) && d > 0) {
     const dstars = Math.max(0, Math.min(5, Math.trunc(d)));
     return { dstars, mstars: 0 };
   }
 
-  // Fallback: parse from name/lore coflnet style
+  // Coflnet fallback from itemName OR lore
   const fromName = coflnetStars10FromText(itemName);
   const fromLore = coflnetStars10FromText(loreRaw);
+  const total = Math.max(fromName, fromLore);
 
-  const total = Math.max(fromName || 0, fromLore || 0);
   if (total <= 0) return { dstars: 0, mstars: 0 };
   if (total <= 5) return { dstars: total, mstars: 0 };
   return { dstars: 5, mstars: total - 5 };
 }
+
 
 function extractPetLevel(extra, itemName) {
   const petInfo = extra?.petInfo;
@@ -649,3 +661,4 @@ export async function buildSignature({ itemName = "", lore = "", tier = "", item
 
   return [...parts, ...enchTokens].join("|");
 }
+
