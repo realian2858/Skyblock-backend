@@ -1,12 +1,14 @@
-// server.js (v15 - HARD CLEAN AUTOCOMPLETE FIX + STRICT MATCH + STARS/WI FIX + Cloud Run safe)
+// server.js (v16 - Coflnet stars + strict partial + hard clean autocomplete + Cloud Run safe)
 //
-// ✅ /api/items returns UNIQUE item_key AND UNIQUE "base label" (kills Terminator ➋➌➍, ②③④, etc)
-// ✅ Converts circled/dingbat digits to normal digits BEFORE dedupe
-// ✅ Label derived from item_key BUT key is also unicode-normalized (handles terminator_➋ keys)
-// ✅ STRICT candidate filtering: diff>=2 stars OR enchant tier diff>=2 => excluded (NONE)
-// ✅ Matched enchant display uses SALE level (so Chimera 3 is evaluated correctly)
-// ✅ WI detection accepts 1/true/yes
-// ✅ /api/recommend canonicalizes item_key too (Hyperion vs hyperion works)
+// ✅ /api/items UNIQUE item_key + UNIQUE base label (kills Terminator ➋➌➍, ②③④, etc)
+// ✅ Converts circled/dingbat digits to ASCII digits BEFORE dedupe
+// ✅ STRICT candidate filtering:
+//    - Stars diff: 0 exact, 1 => PARTIAL, >=2 => NONE (excluded)
+//    - Enchant diff: level diff rules (primary), tier diff fallback
+// ✅ PARTIAL is returned as tier:"PARTIAL" (frontend renders purple)
+// ✅ Stars computed Coflnet-style: "✪✪✪✪✪➌" => 8 stars10
+// ✅ WI detection accepts 1/true/yes and parseLore detects scrolls case-safe
+// ✅ item_key canonicalized (Hyperion vs hyperion works)
 
 import path from "path";
 import { fileURLToPath } from "url";
@@ -22,6 +24,8 @@ import {
   normalizeEnchantKey,
   buildSignature,
   tierFor,
+  // NEW export from parseLore.js v6:
+  coflnetStars10FromText,
 } from "./parseLore.js";
 
 dotenv.config();
@@ -63,27 +67,19 @@ function unicodeNormalizeBasic(s) {
 }
 
 // Map lots of “circled/dingbat” digits to ASCII digits.
-// Includes: ①②③, ⓵⓶⓷, ➊➋➌, ❶❷❸, and more.
 const DIGIT_CHAR_MAP = (() => {
   const map = new Map();
-
-  // Helper to add a contiguous range
-  const addRange = (startCode, chars) => {
-    for (let i = 0; i < chars.length; i++) map.set(chars[i], String(startCode + i));
+  const addRange = (startDigit, chars) => {
+    for (let i = 0; i < chars.length; i++) map.set(chars[i], String(startDigit + i));
   };
-
-  // Common sets (0-9)
-  addRange(0, "⓪①②③④⑤⑥⑦⑧⑨"); // circled
-  addRange(0, "➀➁➂➃➄➅➆➇➈➉"); // circled (black/white)
-  addRange(1, "➊➋➌➍➎➏➐➑➒➓"); // dingbat negative circled 1-10
-  addRange(1, "❶❷❸❹❺❻❼❽❾❿"); // dingbat 1-10
-  addRange(1, "⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾"); // circled sans 1-10
-  addRange(0, "０１２３４５６７８９"); // fullwidth digits
-
-  // Superscripts/subscripts (0-9)
+  addRange(0, "⓪①②③④⑤⑥⑦⑧⑨");
+  addRange(0, "０１２３４５６７８９");
+  addRange(1, "➊➋➌➍➎➏➐➑➒➓");
+  addRange(1, "❶❷❸❹❺❻❼❽❾❿");
+  addRange(1, "⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾");
   addRange(0, "⁰¹²³⁴⁵⁶⁷⁸⁹");
   addRange(0, "₀₁₂₃₄₅₆₇₈₉");
-
+  // (Covers what you showed: ➋➌➍ etc)
   return map;
 })();
 
@@ -121,23 +117,18 @@ function stripNonWordButKeepNice(s) {
 
 function cleanDisplayName(name) {
   let s = stripNonWordButKeepNice(name);
-
-  // strip leading reforges (stacked)
   for (let i = 0; i < 6; i++) {
     const next = s.replace(REFORGE_RE, "").trim();
     if (next === s) break;
     s = next;
   }
-
   return s;
 }
 
-// "hyperion" -> "Hyperion", "dark_claymore" -> "Dark Claymore"
-// Also normalizes weird digits in the KEY itself (terminator_➋ etc).
+// Label derived from key (stable). Also normalizes weird digits in key.
 function labelFromKey(itemKey) {
   let k = String(itemKey || "").trim();
   if (!k) return "";
-
   k = normalizeWeirdDigits(k);
   const spaced = k.replace(/_/g, " ").replace(/\s+/g, " ").trim();
   const titled = spaced.replace(/\w\S*/g, (w) => w[0].toUpperCase() + w.slice(1));
@@ -149,13 +140,12 @@ function normLabel(label) {
 }
 
 // Remove junk suffix variants:
-// - trailing digits 1..10 (with OR without space) after digit normalization
+// - trailing digits 1..10 (with OR without space)
 // - roman numerals I..X
 function baseLabelForDedupe(label) {
   const n = normLabel(label);
   if (!n) return "";
 
-  // e.g. "terminator2" or "terminator 2"
   let m = n.match(/^(.*?)(?:\s*)(\d{1,2})$/);
   if (m) {
     const base = (m[1] || "").trim();
@@ -163,7 +153,6 @@ function baseLabelForDedupe(label) {
     if (base && Number.isFinite(num) && num >= 1 && num <= 10) return base;
   }
 
-  // e.g. "terminator ii", "terminator iv"
   m = n.match(/^(.*)\s+(i|ii|iii|iv|v|vi|vii|viii|ix|x)$/i);
   if (m) {
     const base = (m[1] || "").trim();
@@ -177,18 +166,9 @@ function baseLabelForDedupe(label) {
    Signature parsing helpers
 ========================= */
 const RESERVED_SIG_KEYS = new Set([
-  "tier",
-  "dstars",
-  "mstars",
-  "stars10",
-  "stars",
-  "wither_impact",
-  "witherimpact",
-  "pet_level",
-  "pet_item",
-  "dye",
-  "skin",
-  "petskin",
+  "tier","dstars","mstars","stars10","stars",
+  "wither_impact","witherimpact",
+  "pet_level","pet_item","dye","skin","petskin",
 ]);
 
 function sigGet(sig, key) {
@@ -209,21 +189,24 @@ function sigDungeonStars(sig) {
 function sigMasterStars(sig) {
   return Math.max(0, Math.min(5, Number(sigGet(sig, "mstars")) || 0));
 }
+
+// ✅ Coflnet: use stars10 if present; else dstars+mstars; else attempt to parse from signature text if any.
 function sigStars10(sig) {
-  // fallback to stars/stars10 if your signature stores total stars directly
   const s10 = Number(sigGet(sig, "stars10")) || 0;
-  if (s10 > 0) return Math.max(0, Math.min(10, s10));
+  if (s10 > 0) return Math.max(0, Math.min(10, Math.trunc(s10)));
 
   const s = Number(sigGet(sig, "stars")) || 0;
-  if (s > 0) return Math.max(0, Math.min(10, s));
+  if (s > 0) return Math.max(0, Math.min(10, Math.trunc(s)));
 
-  return Math.max(0, Math.min(10, sigDungeonStars(sig) + sigMasterStars(sig)));
+  const fromSplit = sigDungeonStars(sig) + sigMasterStars(sig);
+  if (fromSplit > 0) return Math.max(0, Math.min(10, fromSplit));
+
+  // last resort: parse "stars-like" stuff embedded in sig string (rare)
+  return Math.max(0, Math.min(10, coflnetStars10FromText(sig) || 0));
 }
+
 function sigWI(sig) {
-  const v =
-    sigGet(sig, "wither_impact") ||
-    sigGet(sig, "witherimpact") ||
-    "";
+  const v = sigGet(sig, "wither_impact") || sigGet(sig, "witherimpact") || "";
   const t = String(v).trim().toLowerCase();
   return t === "1" || t === "true" || t === "yes";
 }
@@ -281,7 +264,7 @@ function median(nums) {
 }
 
 /* =========================
-   Tier rank (for diff calc)
+   Tier rank (fallback only)
 ========================= */
 const TIER_RANK = { BB: 0, B: 1, A: 2, AA: 3, AAA: 4, MISC: -1 };
 function tierRank(t) {
@@ -348,7 +331,7 @@ app.get("/api/petitems", (req, res) => {
 });
 
 /* =========================
-   Cosmetics options (keep yours)
+   Cosmetics options (same as yours)
 ========================= */
 const DYE_LABELS = [
   "Aquamarine Dye","Archfiend Dye","Aurora Dye","Bingo Blue Dye","Black Ice Dye","Bone Dye","Brick Red Dye",
@@ -410,10 +393,29 @@ function applyVerifiedFiltersOrNull(sig, filters) {
 }
 
 /* =========================
-   Strict match quality (EXCLUSION RULE)
-   - stars diff 0 => ok, diff 1 => PARTIAL, diff>=2 => NONE
-   - enchant tier diff 0 => ok, diff 1 => PARTIAL, diff>=2 => NONE
+   STRICT MATCH QUALITY
+   Stars: diff 0 exact, diff 1 partial, diff>=2 reject
+   Enchants: LEVEL diff rules (primary), tier diff fallback
 ========================= */
+function enchantDiff(nameKey, inputLvl, saleLvl) {
+  const inL = Number(inputLvl) || 0;
+  const saL = Number(saleLvl) || 0;
+
+  // PRIMARY: level difference (your rule)
+  const levelDiff = Math.abs(saL - inL);
+
+  // FALLBACK: tier bucket diff (if you still want it to matter)
+  const inTier = tierFor(nameKey, inL);
+  const saTier = tierFor(nameKey, saL);
+  const tierDiff =
+    (inTier && saTier && inTier !== "MISC" && saTier !== "MISC")
+      ? Math.abs(tierRank(saTier) - tierRank(inTier))
+      : 0;
+
+  // Use the stricter diff
+  return Math.max(levelDiff, tierDiff);
+}
+
 function strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters }) {
   if (!sig) return "NONE";
 
@@ -439,11 +441,7 @@ function strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters }) {
     const saleLvl = Number(saleEnchants.get(nameKey) || 0);
     if (!saleLvl) return "NONE";
 
-    const inTier = tierFor(nameKey, inL);
-    const saTier = tierFor(nameKey, saleLvl);
-    if (!inTier || !saTier || inTier === "MISC" || saTier === "MISC") return "NONE";
-
-    const diff = Math.abs(tierRank(saTier) - tierRank(inTier));
+    const diff = enchantDiff(nameKey, inL, saleLvl);
     if (diff === 1) anyPartial = true;
     else if (diff >= 2) return "NONE";
   }
@@ -452,7 +450,7 @@ function strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters }) {
 }
 
 /* =========================
-   Sales scoring (DISPLAY SALE LEVEL, NOT INPUT LEVEL)
+   Scoring (display SALE level)
 ========================= */
 function tierBonusForTier(tier) {
   const t = String(tier || "").toUpperCase();
@@ -479,8 +477,7 @@ function scorePartial({ userEnchantsMap, inputStars10, sig, filters }) {
   const vf = applyVerifiedFiltersOrNull(sig, filters);
   if (!vf.ok) return null;
 
-  if (vf.unverifiable) score -= 2;
-  else score += 2;
+  score += vf.unverifiable ? -2 : 2;
 
   if (Number(inputStars10) > 0) {
     const st = starsScore(inputStars10, sigStars10(sig));
@@ -497,23 +494,20 @@ function scorePartial({ userEnchantsMap, inputStars10, sig, filters }) {
     const saleLvl = Number(saleEnchants.get(nameKey) || 0);
     if (!saleLvl) continue;
 
-    const inTier = tierFor(nameKey, inL);
-    const saTier = tierFor(nameKey, saleLvl);
-    if (!inTier || !saTier || inTier === "MISC" || saTier === "MISC") continue;
-
-    const diff = Math.abs(tierRank(saTier) - tierRank(inTier));
+    const diff = enchantDiff(nameKey, inL, saleLvl);
 
     let tierLabel = "MISC";
     let add = 0;
 
     if (diff === 0) {
-      tierLabel = saTier; // show actual sale tier
-      add = tierBonusForTier(saTier) + 1.2;
+      // exact -> show sale tier (gold)
+      tierLabel = tierFor(nameKey, saleLvl);
+      add = tierBonusForTier(tierLabel) + 1.2;
     } else if (diff === 1) {
-      tierLabel = "PARTIAL"; // frontend should render purple for PARTIAL
+      // partial -> purple in frontend
+      tierLabel = "PARTIAL";
       add = 1.0;
     } else {
-      // diff>=2 is “not match” in STRICT logic; we’ll still compute but it will get filtered out by strictMatchQuality
       tierLabel = "MISC";
       add = 0;
     }
@@ -522,7 +516,7 @@ function scorePartial({ userEnchantsMap, inputStars10, sig, filters }) {
 
     score += add;
     matched.push({
-      enchant: { tier: tierLabel, label: displayEnchant(nameKey, saleLvl) }, // ✅ display SALE level
+      enchant: { tier: tierLabel, label: displayEnchant(nameKey, saleLvl) }, // ✅ SALE level displayed
       add,
     });
   }
@@ -532,10 +526,7 @@ function scorePartial({ userEnchantsMap, inputStars10, sig, filters }) {
 }
 
 /* =========================
-   ✅ /api/items (FIXED: no dirty duplicates)
-   - Search: key OR name
-   - Label: derived from normalized key (stable)
-   - Deduping: by baseLabelForDedupe AFTER converting circled/dingbat digits
+   ✅ /api/items (hard clean dedupe)
 ========================= */
 app.get("/api/items", async (req, res) => {
   try {
@@ -553,9 +544,7 @@ app.get("/api/items", async (req, res) => {
         WHERE item_key IS NOT NULL AND item_key <> ''
           AND (item_key ILIKE '%' || $1 || '%' OR item_name ILIKE '%' || $1 || '%')
         GROUP BY item_key
-
         UNION ALL
-
         SELECT item_key, MAX(last_seen_ts) AS ts
         FROM auctions
         WHERE item_key IS NOT NULL AND item_key <> ''
@@ -579,15 +568,12 @@ app.get("/api/items", async (req, res) => {
       let key = String(r.item_key || "").trim();
       if (!key) continue;
 
-      // normalize key so terminator_➋ and terminator_2 collapse
       key = normalizeWeirdDigits(key);
-
       if (seenKey.has(key)) continue;
 
       const label = labelFromKey(key);
       const base = baseLabelForDedupe(label);
       if (!base) continue;
-
       if (seenBaseLabel.has(base)) continue;
 
       seenKey.add(key);
@@ -604,30 +590,24 @@ app.get("/api/items", async (req, res) => {
 });
 
 /* =========================
-   /api/recommend (STRICT FILTERED CANDIDATES + ACCURATE LBIN)
+   /api/recommend (STRICT candidates + LBIN)
 ========================= */
 app.get("/api/recommend", async (req, res) => {
   try {
     const now = Date.now();
 
-    // ✅ Canonicalize BOTH item_key and item text so "Hyperion" works
     const itemKeyFromClient = String(req.query.item_key || "").trim();
     const itemRaw = itemKeyFromClient || String(req.query.item || "");
     const itemKey = canonicalItemKey(normalizeWeirdDigits(itemRaw));
 
     if (!itemKey) {
-      return res.json({
-        recommended: null,
-        top3: [],
-        count: 0,
-        note: "Pick an item from suggestions.",
-        live: null,
-      });
+      return res.json({ recommended: null, top3: [], count: 0, note: "Pick an item from suggestions.", live: null });
     }
 
     const inputStars10 = Math.max(0, Math.min(10, Number(req.query.stars10 ?? req.query.stars ?? 0)));
     const userRarity = normUserKey(req.query.rarity || "");
-    const userWI = String(req.query.wi ?? "") === "1" || String(req.query.wi ?? "") === "true";
+    const userWI = String(req.query.wi ?? "").trim().toLowerCase() === "1"
+      || String(req.query.wi ?? "").trim().toLowerCase() === "true";
 
     const userDye = normalizeFromOptions(req.query.dye, DYE_OPTIONS);
     const userSkin = normalizeFromOptions(req.query.skin, SKIN_OPTIONS);
@@ -662,8 +642,6 @@ app.get("/api/recommend", async (req, res) => {
 
       const sig = String(r.signature || "").trim();
       const quality = strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters });
-
-      // ✅ STRICT EXCLUSION: only keep PERFECT/PARTIAL candidates
       if (quality === "NONE") continue;
 
       if (quality === "PERFECT") perfectPrices.push(price);
@@ -759,14 +737,8 @@ app.get("/api/recommend", async (req, res) => {
         start_ts: Number(a.start_ts || 0),
         end_ts: Number(a.end_ts || 0),
         signature: sig,
-
-        dstars: sig ? sigDungeonStars(sig) : 0,
-        mstars: sig ? sigMasterStars(sig) : 0,
-        stars10: sig ? sigStars10(sig) : 0,
-
-        wi: sig ? sigWI(sig) : false,
-        petItem: sig ? sigPetItem(sig) : "none",
-
+        stars10: sigStars10(sig),
+        wi: sigWI(sig),
         score: sc.score,
         matched: sc.matched,
         quality,
@@ -866,7 +838,7 @@ app.get("/api/petskins", (req, res) => {
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
 /* =========================
-   Boot (Cloud Run friendly)
+   Boot
 ========================= */
 const PORT = Number(process.env.PORT || 8080);
 app.listen(PORT, "0.0.0.0", () => {
