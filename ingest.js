@@ -431,11 +431,24 @@ export async function syncOnce() {
 let shuttingDown = false;
 let running = false;
 
+// --- RUN ONCE ENTRYPOINT (for Cloud Run Jobs) ---
 async function main() {
   console.log("🚀 INGEST BOOT", new Date().toISOString());
   console.log("ENV OK:", {
     hasDatabaseUrl: !!process.env.DATABASE_URL,
     hasHypixelKey: !!process.env.HYPIXEL_API_KEY,
+  });
+
+  await syncOnce();
+
+  console.log("✅ INGEST DONE", new Date().toISOString());
+}
+
+main()
+  .then(() => process.exit(0))
+  .catch((e) => {
+    console.error("❌ INGEST FAILED", e?.stack || e);
+    process.exit(1);
   });
 
   while (!shuttingDown) {
@@ -495,3 +508,4 @@ main().catch((err) => {
   console.error("INGEST FATAL:", err?.message || err);
   process.exit(1);
 });
+
