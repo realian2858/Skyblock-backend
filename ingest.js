@@ -1,11 +1,17 @@
-// ingest.js (v3 - LBIN-accurate sync)
-// Goals:
-// ✅ Always fetch ALL pages every cycle (full snapshot)
-// ✅ Upsert live auctions fast + safely
-// ✅ Build signature for BIN auctions (and any auction missing sig) so petskins/dyes work
-// ✅ Mark missing-from-snapshot auctions as ended (this is critical for LBIN accuracy)
+// ingest.js (v4 - Cloud Run ready, runs forever every 2 minutes)
+//
+// ✅ Full snapshot each cycle (all pages)
+// ✅ Upsert live auctions in bulk
+// ✅ Build signature for BIN + when bytes/lore exists
+// ✅ Mark not-seen auctions as ended (LBIN correctness)
 // ✅ Finalize ended -> sales in batches
-// ✅ No per-sync “rebuildSalesItemKeys” (that was killing speed + LBIN freshness)
+// ✅ Backfill sales.item_key lightly
+// ✅ RUNS FOREVER: one cycle every 2 minutes (no overlap)
+// ✅ Graceful shutdown on SIGTERM/SIGINT
+//
+// Env required:
+// - DATABASE_URL
+// - HYPIXEL_API_KEY
 
 import dotenv from "dotenv";
 import pg from "pg";
@@ -13,35 +19,66 @@ import { canonicalItemKey, buildSignature } from "./parseLore.js";
 
 dotenv.config();
 
+/* =========================
+   Config
+========================= */
 const API = "https://api.hypixel.net/skyblock/auctions";
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 
 function requireEnv(name) {
   const v = process.env[name];
-  if (!v) throw new Error(`Missing env var: ${name}`);
-  return v;
+  if (!v || !String(v).trim()) throw new Error(`Missing env var: ${name}`);
+  return String(v).trim();
 }
 
+const DATABASE_URL = requireEnv("DATABASE_URL");
 const HYPIXEL_KEY = requireEnv("HYPIXEL_API_KEY");
 
-// tune these if you want
-const PAGE_DELAY_MS = 90;          // small delay so you don't hammer API
-const PER_SYNC_GRACE_MS = 60_000;  // auctions not seen in this snapshot are ended after grace (1 min)
-const FINALIZE_BATCH = 5000;       // ended->sales batch size
-const FINALIZE_MAX_LOOPS = 60;     // 60 * 5k = 300k max per sync (won't hit normally)
+// Cycle timing
+const LOOP_EVERY_MS = 120_000; // ✅ 2 minutes
+
+// Hypixel API pacing
+const PAGE_DELAY_MS = 90;
+
+// LBIN correctness: if not seen recently, treat as ended
+const PER_SYNC_GRACE_MS = 60_000;
+
+// Finalize ended auctions -> sales
+const FINALIZE_BATCH = 5000;
+const FINALIZE_MAX_LOOPS = 60;
+
+// Maintenance
+const SALES_KEY_BACKFILL_BATCH = 20000;
+
+// Safety
+const MAX_PAGES_HARD_CAP = 200; // just a guard in case API goes weird
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/* =========================
+   Postgres pool
+========================= */
+const pool = new pg.Pool({
+  connectionString: DATABASE_URL,
+  // optional timeouts; safe defaults:
+  max: 10,
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 15_000,
+});
+
+pool.on("error", (err) => {
+  console.error("PG pool error:", err?.message || err);
+});
+
+/* =========================
+   HTTP helpers
+========================= */
 async function fetchJson(url, tries = 4) {
   let lastErr = null;
   for (let i = 0; i < tries; i++) {
     try {
-      const res = await fetch(url, {
-        headers: { accept: "application/json" },
-      });
+      const res = await fetch(url, { headers: { accept: "application/json" } });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      return data;
+      return await res.json();
     } catch (e) {
       lastErr = e;
       await sleep(250 + i * 350);
@@ -62,9 +99,9 @@ function nonEmptyText(x) {
   return s && s.trim() ? s.trim() : null;
 }
 
-/**
- * Build signature BUT NEVER crash sync.
- */
+/* =========================
+   Signature safe wrapper
+========================= */
 async function safeBuildSignature({ itemName, lore, tier, itemBytes }) {
   try {
     const sig = await buildSignature({
@@ -80,18 +117,12 @@ async function safeBuildSignature({ itemName, lore, tier, itemBytes }) {
   }
 }
 
-/**
- * Upsert auctions in a single INSERT .. ON CONFLICT using VALUES bulk.
- * Much faster than 1 query per auction.
- *
- * Notes:
- * - We compute signature in JS (can’t avoid that), but we only do it when:
- *   - auction is BIN, OR signature missing in DB (new uuid), OR item has bytes/lore
- */
+/* =========================
+   Bulk upsert auctions
+========================= */
 async function upsertAuctionsBulk(list, now) {
   if (!Array.isArray(list) || list.length === 0) return 0;
 
-  // Build rows for bulk insert
   const rows = [];
 
   for (const a of list) {
@@ -111,8 +142,7 @@ async function upsertAuctionsBulk(list, now) {
     const lore = nonEmptyText(a.item_lore);
     const bytes = nonEmptyText(a.item_bytes);
 
-    // Build signature for BIN auctions (helps your “real LBIN with filters”),
-    // and for anything that has bytes/lore (cheap-ish improvement).
+    // Build signature for BIN auctions and anything with lore/bytes
     let sig = null;
     if (bin || lore || bytes) {
       sig = await safeBuildSignature({
@@ -146,7 +176,6 @@ async function upsertAuctionsBulk(list, now) {
   try {
     await client.query("BEGIN");
 
-    // Build VALUES placeholders
     const values = [];
     const placeholders = [];
     let idx = 1;
@@ -192,13 +221,11 @@ async function upsertAuctionsBulk(list, now) {
         item_bytes   = COALESCE(EXCLUDED.item_bytes, auctions.item_bytes),
         last_seen_ts = EXCLUDED.last_seen_ts,
         is_ended     = false,
-        -- Keep existing signature if present, otherwise fill it
         signature = CASE
-  WHEN auctions.signature IS NULL OR auctions.signature = '' THEN EXCLUDED.signature
-  WHEN auctions.signature NOT LIKE '%pet_item:%' AND EXCLUDED.signature LIKE '%pet_item:%' THEN EXCLUDED.signature
-  ELSE auctions.signature
-END
-
+          WHEN auctions.signature IS NULL OR auctions.signature = '' THEN EXCLUDED.signature
+          WHEN auctions.signature NOT LIKE '%pet_item:%' AND EXCLUDED.signature LIKE '%pet_item:%' THEN EXCLUDED.signature
+          ELSE auctions.signature
+        END
     `;
 
     await client.query(sql, values);
@@ -212,11 +239,9 @@ END
   }
 }
 
-/**
- * IMPORTANT for LBIN:
- * If an auction is not seen in the latest full snapshot, it's not live.
- * We mark it ended so server.js doesn't think it's still active.
- */
+/* =========================
+   LBIN correctness: end unseen
+========================= */
 async function markNotSeenInSnapshotAsEnded(now) {
   await pool.query(
     `
@@ -229,10 +254,9 @@ async function markNotSeenInSnapshotAsEnded(now) {
   );
 }
 
-/**
- * Move ended auctions -> sales.
- * Also marks auctions.is_ended = true (kept).
- */
+/* =========================
+   Finalize ended -> sales
+========================= */
 async function finalizeEnded(now) {
   const { rows } = await pool.query(
     `
@@ -273,11 +297,10 @@ async function finalizeEnded(now) {
         ended_ts    = EXCLUDED.ended_ts,
         tier        = EXCLUDED.tier,
         signature = CASE
-  WHEN sales.signature IS NULL OR sales.signature = '' THEN EXCLUDED.signature
-  WHEN sales.signature NOT LIKE '%pet_item:%' AND EXCLUDED.signature LIKE '%pet_item:%' THEN EXCLUDED.signature
-  ELSE sales.signature
-END
-
+          WHEN sales.signature IS NULL OR sales.signature = '' THEN EXCLUDED.signature
+          WHEN sales.signature NOT LIKE '%pet_item:%' AND EXCLUDED.signature LIKE '%pet_item:%' THEN EXCLUDED.signature
+          ELSE sales.signature
+        END
     `;
 
     const markEndedSql = `UPDATE auctions SET is_ended = true WHERE uuid=$1`;
@@ -289,7 +312,7 @@ END
       const itemKey = r.item_key || canonicalItemKey(r.item_name || "") || null;
 
       const sig =
-        r.signature ||
+        (r.signature && String(r.signature).trim()) ||
         (await safeBuildSignature({
           itemName: r.item_name || "",
           lore: (r.item_lore || "").toString(),
@@ -324,11 +347,10 @@ END
   }
 }
 
-/**
- * Backfill sales.item_key (for autocomplete/recommend stability)
- * Keep it, but do NOT run giant rebuilds every sync.
- */
-async function backfillSalesItemKeys({ batch = 20000 } = {}) {
+/* =========================
+   Backfill sales.item_key
+========================= */
+async function backfillSalesItemKeys({ batch = SALES_KEY_BACKFILL_BATCH } = {}) {
   const client = await pool.connect();
   try {
     const { rows } = await client.query(
@@ -345,14 +367,15 @@ async function backfillSalesItemKeys({ batch = 20000 } = {}) {
 
     await client.query("BEGIN");
     const upd = `UPDATE sales SET item_key = $2 WHERE uuid = $1`;
-    let updated = 0;
 
+    let updated = 0;
     for (const r of rows) {
       const k = canonicalItemKey(r.item_name || "");
       if (!k) continue;
       await client.query(upd, [r.uuid, k]);
       updated++;
     }
+
     await client.query("COMMIT");
     return updated;
   } catch (e) {
@@ -363,36 +386,30 @@ async function backfillSalesItemKeys({ batch = 20000 } = {}) {
   }
 }
 
-/**
- * Main sync:
- * - fetch first page -> totalPages
- * - fetch every page -> upsert auctions
- * - mark missing-from-snapshot as ended (LBIN correctness)
- * - finalize ended -> sales
- */
+/* =========================
+   One full cycle
+========================= */
 export async function syncOnce() {
   const now = Date.now();
 
   const first = await fetchPage(0);
-  const totalPages = Math.max(1, Number(first.totalPages || 1));
+  let totalPages = Math.max(1, Number(first.totalPages || 1));
+  totalPages = Math.min(totalPages, MAX_PAGES_HARD_CAP);
+
   console.log(`📦 Sync: ${totalPages} pages`);
 
   let upserted = 0;
 
-  // upsert page 0
   upserted += await upsertAuctionsBulk(first.auctions || [], now);
 
-  // upsert remaining pages
   for (let p = 1; p < totalPages; p++) {
     const data = await fetchPage(p);
     upserted += await upsertAuctionsBulk(data.auctions || [], now);
     if (PAGE_DELAY_MS > 0) await sleep(PAGE_DELAY_MS);
   }
 
-  // 🔥 KEY LBIN FIX: end auctions that weren't seen in this full snapshot
   await markNotSeenInSnapshotAsEnded(now);
 
-  // finalize ended -> sales
   let totalFinalized = 0;
   for (let i = 0; i < FINALIZE_MAX_LOOPS; i++) {
     const n = await finalizeEnded(now);
@@ -401,38 +418,80 @@ export async function syncOnce() {
     await sleep(30);
   }
 
-  // light maintenance
-  const filled = await backfillSalesItemKeys({ batch: 20000 });
+  const filled = await backfillSalesItemKeys({ batch: SALES_KEY_BACKFILL_BATCH });
   if (filled > 0) console.log(`🧩 Backfilled sales.item_key: ${filled}`);
 
   console.log(`✅ Upserted live: ${upserted} | Finalized sales: ${totalFinalized}`);
+  return { upserted, totalFinalized, filled, totalPages };
 }
 
-/**
- * Optional manual rebuild tool (run once from a script, NOT inside syncOnce)
- */
-export async function rebuildAllSalesItemKeys(batch = 50000) {
-  const client = await pool.connect();
-  try {
-    let offset = 0;
-    while (true) {
-      const { rows } = await client.query(
-        `SELECT uuid, item_name FROM sales ORDER BY ended_ts DESC LIMIT $1 OFFSET $2`,
-        [batch, offset]
-      );
-      if (!rows.length) break;
+/* =========================
+   Forever runner (every 2 minutes, no overlap)
+========================= */
+let shuttingDown = false;
+let running = false;
 
-      await client.query("BEGIN");
-      for (const r of rows) {
-        const k = canonicalItemKey(r.item_name || "");
-        await client.query(`UPDATE sales SET item_key=$2 WHERE uuid=$1`, [r.uuid, k]);
-      }
-      await client.query("COMMIT");
+async function main() {
+  console.log("🚀 INGEST BOOT", new Date().toISOString());
+  console.log("ENV OK:", {
+    hasDatabaseUrl: !!process.env.DATABASE_URL,
+    hasHypixelKey: !!process.env.HYPIXEL_API_KEY,
+  });
 
-      offset += rows.length;
-      console.log("rebuilt", offset);
+  while (!shuttingDown) {
+    if (running) {
+      // Should never happen (we control it), but guard anyway.
+      console.log("⏳ Previous cycle still running, skipping this tick");
+      await sleep(5_000);
+      continue;
     }
-  } finally {
-    client.release();
+
+    running = true;
+    const t0 = Date.now();
+    try {
+      console.log("🟦 Cycle start", new Date().toISOString());
+      await syncOnce();
+      const dt = Date.now() - t0;
+      console.log(`🟩 Cycle end (${dt} ms)`, new Date().toISOString());
+    } catch (err) {
+      console.error("🟥 Cycle error:", err?.message || err);
+    } finally {
+      running = false;
+    }
+
+    // wait until next cycle
+    for (let waited = 0; waited < LOOP_EVERY_MS && !shuttingDown; ) {
+      const step = Math.min(2_000, LOOP_EVERY_MS - waited);
+      await sleep(step);
+      waited += step;
+    }
   }
+
+  console.log("🛑 INGEST STOPPING");
 }
+
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`🛑 Received ${signal}, shutting down...`);
+
+  // give a short window for current cycle to finish
+  const start = Date.now();
+  while (running && Date.now() - start < 20_000) {
+    await sleep(500);
+  }
+
+  try {
+    await pool.end();
+  } catch {}
+
+  process.exit(0);
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
+main().catch((err) => {
+  console.error("INGEST FATAL:", err?.message || err);
+  process.exit(1);
+});
