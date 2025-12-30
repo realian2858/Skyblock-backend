@@ -1,11 +1,17 @@
-// server.js (v17 - HARDER CLEAN AUTOCOMPLETE + ACCURATE LBIN + Cloud Run safe)
+// server.js (v15 - HARD CLEAN AUTOCOMPLETE + FIX STAR PARSING + ACCURATE LBIN + Cloud Run safe)
 //
-// ✅ /api/items returns ONE per "baseKey" (kills Terminator ➋➌➍, ②③④, etc)
-// ✅ Converts multiple unicode digit sets -> normal digits (➋ -> 2)
-// ✅ Aggressive front-strip of reforges + symbol junk
+// ✅ /api/items returns UNIQUE item_key AND UNIQUE "base label" (kills Terminator ➋➌➍ / ②③④ / 2/3/4 variants)
+// ✅ Converts fancy/circled/dingbat digits -> normal digits BEFORE cleaning (so dedupe actually works)
+// ✅ Label is derived from item_key (stable), then cleaned
 // ✅ Search matches both item_key and item_name
+//
+// ✅ Stars parsing fixed:
+//    - signature may store stars as dstars+mstars OR stars10 OR stars (total)
+//    - supports legacy keys: dungeon_stars, master_stars
+//    - prevents “10-star items exist but filter=10 returns none”
+//
 // ✅ LBIN: cheapest PERFECT else PARTIAL (tight alive window)
-// ✅ No background loops
+// ✅ No background loops (ingest job refreshes DB)
 
 import path from "path";
 import { fileURLToPath } from "url";
@@ -40,7 +46,7 @@ const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const ITEMS_LIMIT_DEFAULT = 40;
 const ITEMS_LIMIT_MAX = 60;
 
-// ingest every 2 min -> alive window small
+// ingest every ~2 min -> keep alive small
 const LIVE_ALIVE_MS = 3 * 60 * 1000;
 const LIVE_SCAN_LIMIT = 4000;
 
@@ -54,57 +60,104 @@ function stripStarGlyphs(s) {
     .trim();
 }
 
-/**
- * Convert MANY unicode digit styles into normal ASCII digits.
- * This is the real fix for Terminator ➋➌➍ (dingbat circled digits).
- */
-const UNICODE_DIGIT_MAP = new Map([
-  // Circled digits (U+2460..)
-  ["①", "1"], ["②", "2"], ["③", "3"], ["④", "4"], ["⑤", "5"],
-  ["⑥", "6"], ["⑦", "7"], ["⑧", "8"], ["⑨", "9"], ["⑩", "10"],
-  ["⑪", "11"], ["⑫", "12"], ["⑬", "13"], ["⑭", "14"], ["⑮", "15"],
-  ["⑯", "16"], ["⑰", "17"], ["⑱", "18"], ["⑲", "19"], ["⑳", "20"],
+// Map fancy digit glyphs -> ASCII digits
+// Includes: ①②③..., ❶❷❸..., ➀➁➂..., ➊➋➌..., ⓪, etc.
+const FANCY_DIGIT_MAP = (() => {
+  const map = new Map();
 
-  // Dingbat circled digits (U+2780..U+2793) -> ➊➋➌➍➎...
-  ["➊", "1"], ["➋", "2"], ["➌", "3"], ["➍", "4"], ["➎", "5"],
-  ["➏", "6"], ["➐", "7"], ["➑", "8"], ["➒", "9"], ["➓", "10"],
-  ["⓫", "11"], ["⓬", "12"], ["⓭", "13"], ["⓮", "14"], ["⓯", "15"],
-  ["⓰", "16"], ["⓱", "17"], ["⓲", "18"], ["⓳", "19"], ["⓴", "20"],
+  // circled 0
+  map.set("⓪", "0");
 
-  // Enclosed digits (U+24F5.. etc) -> ⓵⓶⓷⓸⓹...
-  ["⓵", "1"], ["⓶", "2"], ["⓷", "3"], ["⓸", "4"], ["⓹", "5"],
-  ["⓺", "6"], ["⓻", "7"], ["⓼", "8"], ["⓽", "9"], ["⓾", "10"],
-
-  // Parenthesized digits (U+2474..)
-  ["⑴", "1"], ["⑵", "2"], ["⑶", "3"], ["⑷", "4"], ["⑸", "5"],
-  ["⑹", "6"], ["⑺", "7"], ["⑻", "8"], ["⑼", "9"], ["⑽", "10"],
-]);
-
-function replaceUnicodeDigits(s) {
-  let out = String(s || "");
-  // Fast path: only do work if any “special digit-ish” chars exist
-  if (!/[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳➊➋➌➍➎➏➐➑➒➓⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾⑴⑵⑶⑷⑸⑹⑺⑻⑼⑽]/.test(out)) {
-    return out;
+  // ① (U+2460) .. ⑳ (U+2473) => 1..20
+  for (let i = 0; i < 20; i++) {
+    map.set(String.fromCharCode(0x2460 + i), String(i + 1));
   }
-  for (const [k, v] of UNICODE_DIGIT_MAP.entries()) {
-    out = out.split(k).join(v);
+
+  // ❶ (U+2776) .. ❿ (U+277F) => 1..10
+  for (let i = 0; i < 10; i++) {
+    map.set(String.fromCharCode(0x2776 + i), String(i + 1));
+  }
+
+  // ➀ (U+2780) .. ➉ (U+2789) => 1..10
+  for (let i = 0; i < 10; i++) {
+    map.set(String.fromCharCode(0x2780 + i), String(i + 1));
+  }
+
+  // ➊ (U+278A) .. ➓ (U+2793) => 1..10  (this is your ➋➌➍ set)
+  for (let i = 0; i < 10; i++) {
+    map.set(String.fromCharCode(0x278a + i), String(i + 1));
+  }
+
+  return map;
+})();
+
+function replaceFancyDigits(s) {
+  const str = String(s || "");
+  let out = "";
+  for (const ch of str) {
+    out += FANCY_DIGIT_MAP.get(ch) ?? ch;
   }
   return out;
 }
 
-// Normalize unicode + digits, unify quotes/dashes
+// Normalize unicode + digits + punctuation to stable forms
 function unicodeNormalize(s) {
-  return replaceUnicodeDigits(String(s || ""))
+  return replaceFancyDigits(String(s || ""))
     .normalize("NFKC")
     .replace(/[’‘]/g, "'")
     .replace(/[–—]/g, "-");
 }
 
 const REFORGE_PREFIXES = [
-  "Shiny","Heroic","Suspicious","Fabled","Dirty","Withered","Spicy","Sharp","Gentle","Odd","Fast","Fair","Epic",
-  "Spiritual","Precise","Hasty","Neat","Grand","Rapid","Unreal","Awkward","Rich","Clean","Fierce","Heavy","Light",
-  "Mythic","Titanic","Smart","Wise","Perfect","Renowned","Ancient","Giant","Necrotic","Loving","Empowered",
-  "Blood Soaked","Mossy","Toil","Bustling","Bountiful","Fleet","Heated","Ambered","Fruitful","Stellar","Auspicious","Refined",
+  "Shiny",
+  "Heroic",
+  "Suspicious",
+  "Fabled",
+  "Dirty",
+  "Withered",
+  "Spicy",
+  "Sharp",
+  "Gentle",
+  "Odd",
+  "Fast",
+  "Fair",
+  "Epic",
+  "Spiritual",
+  "Precise",
+  "Hasty",
+  "Neat",
+  "Grand",
+  "Rapid",
+  "Unreal",
+  "Awkward",
+  "Rich",
+  "Clean",
+  "Fierce",
+  "Heavy",
+  "Light",
+  "Mythic",
+  "Titanic",
+  "Smart",
+  "Wise",
+  "Perfect",
+  "Renowned",
+  "Ancient",
+  "Giant",
+  "Necrotic",
+  "Loving",
+  "Empowered",
+  "Blood Soaked",
+  "Mossy",
+  "Toil",
+  "Bustling",
+  "Bountiful",
+  "Fleet",
+  "Heated",
+  "Ambered",
+  "Fruitful",
+  "Stellar",
+  "Auspicious",
+  "Refined",
 ];
 
 const REFORGE_RE = new RegExp(
@@ -142,62 +195,78 @@ function cleanDisplayName(name) {
 function labelFromKey(itemKey) {
   const k = String(itemKey || "").trim();
   if (!k) return "";
-  const spaced = unicodeNormalize(k).replace(/_/g, " ");
+  const spaced = k.replace(/_/g, " ");
   const titled = spaced.replace(/\w\S*/g, (w) => w[0].toUpperCase() + w.slice(1));
   return cleanDisplayName(titled) || titled;
 }
 
-// normalized label for dedupe
 function normLabel(label) {
   return normKey(stripNonWordButKeepNice(label)).replace(/\s+/g, " ").trim();
 }
 
-/**
- * BaseKey for dedupe:
- * - normalize (converts ➋➌➍ -> 2/3/4)
- * - strip trailing _N (1..10) because those are “variant keys”
- */
-function baseKeyForDedupe(itemKey) {
-  let k = String(itemKey || "").trim();
-  if (!k) return "";
-
-  k = unicodeNormalize(k).toLowerCase().replace(/\s+/g, "_");
-
-  const m = k.match(/^(.*)_(\d{1,2})$/);
-  if (m) {
-    const base = (m[1] || "").trim();
-    const num = Number(m[2]);
-    if (base && Number.isFinite(num) && num >= 1 && num <= 10) return base;
-  }
-
-  return k;
-}
-
-/**
- * Base label for dedupe (extra safety):
- * remove trailing " 1..10" from the DISPLAY label only
- * (works after unicode digits are converted)
- */
+// Strip junk trailing variant numbers like:
+// "Terminator 2", "Terminator ②", "Terminator ➋", "Terminator (3)", "Terminator #4", "Terminator IV"
+// but DO NOT strip real big numbers like "Midas Staff 100"
 function baseLabelForDedupe(label) {
   const n = normLabel(label);
   if (!n) return "";
 
-  const m = n.match(/^(.*)\s+(\d{1,2})$/);
-  if (!m) return n;
+  // normalize again so any fancy digit survived UI -> gets flattened
+  const raw = unicodeNormalize(n);
 
-  const base = (m[1] || "").trim();
-  const num = Number(m[2]);
-  if (!base) return n;
+  // handle roman numerals I..XX as small suffix variants too
+  const romanToInt = (r) => {
+    const s = String(r || "").toUpperCase();
+    const ROM = { I: 1, V: 5, X: 10 };
+    let sum = 0;
+    let prev = 0;
+    for (let i = s.length - 1; i >= 0; i--) {
+      const v = ROM[s[i]] || 0;
+      if (v < prev) sum -= v;
+      else sum += v;
+      prev = v;
+    }
+    return sum;
+  };
 
-  if (Number.isFinite(num) && num >= 1 && num <= 10) return base;
-  return n;
+  // 1) numeric suffix
+  //   base + (optional punctuation) + small number
+  const mNum = raw.match(/^(.*?)(?:\s*(?:[#№]|v|ver)?\s*)?\(?\s*(\d{1,2})\s*\)?$/i);
+  if (mNum) {
+    const base = (mNum[1] || "").trim();
+    const num = Number(mNum[2]);
+    // treat only tiny 1..20 as "variant noise"
+    if (base && Number.isFinite(num) && num >= 1 && num <= 20) return base;
+  }
+
+  // 2) roman suffix (I..XX)
+  const mRom = raw.match(/^(.*?)(?:\s+)([ivx]{1,5})$/i);
+  if (mRom) {
+    const base = (mRom[1] || "").trim();
+    const ri = romanToInt(mRom[2]);
+    if (base && Number.isFinite(ri) && ri >= 1 && ri <= 20) return base;
+  }
+
+  return raw.trim();
 }
 
 /* =========================
    Signature parsing helpers
 ========================= */
 const RESERVED_SIG_KEYS = new Set([
-  "tier","dstars","mstars","wither_impact","pet_level","pet_item","dye","skin","petskin",
+  "tier",
+  "dstars",
+  "mstars",
+  "stars",
+  "stars10",
+  "dungeon_stars",
+  "master_stars",
+  "wither_impact",
+  "pet_level",
+  "pet_item",
+  "dye",
+  "skin",
+  "petskin",
 ]);
 
 function sigGet(sig, key) {
@@ -213,12 +282,26 @@ function sigGet(sig, key) {
 }
 
 function sigDungeonStars(sig) {
-  return Math.max(0, Math.min(5, Number(sigGet(sig, "dstars")) || 0));
+  // Prefer explicit dungeon keys
+  const a = Number(sigGet(sig, "dstars"));
+  const b = Number(sigGet(sig, "dungeon_stars"));
+  const n = Number.isFinite(a) ? a : Number.isFinite(b) ? b : 0;
+  return Math.max(0, Math.min(5, Math.trunc(n) || 0));
 }
 function sigMasterStars(sig) {
-  return Math.max(0, Math.min(5, Number(sigGet(sig, "mstars")) || 0));
+  const a = Number(sigGet(sig, "mstars"));
+  const b = Number(sigGet(sig, "master_stars"));
+  const n = Number.isFinite(a) ? a : Number.isFinite(b) ? b : 0;
+  return Math.max(0, Math.min(5, Math.trunc(n) || 0));
 }
 function sigStars10(sig) {
+  // Fix: some rows store total stars directly (legacy)
+  const direct10 = Number(sigGet(sig, "stars10"));
+  if (Number.isFinite(direct10) && direct10 > 0) return Math.max(0, Math.min(10, Math.trunc(direct10)));
+
+  const direct = Number(sigGet(sig, "stars"));
+  if (Number.isFinite(direct) && direct > 0) return Math.max(0, Math.min(10, Math.trunc(direct)));
+
   return Math.max(0, Math.min(10, sigDungeonStars(sig) + sigMasterStars(sig)));
 }
 function sigWI(sig) {
@@ -324,15 +407,66 @@ function normalizeFromOptions(raw, options) {
    PET ITEM OPTIONS + endpoint
 ========================= */
 const PET_ITEM_LABELS = [
-  "All Skills Exp Boost","All Skills Exp Super-Boost","Antique Remedies","Bejeweled Collar","Big Teeth","Bigger Teeth",
-  "Bingo Booster","Brown Bandana","Bubblegum","Burnt Texts","Combat Exp Boost","Cretan Urn","Crochet Tiger Plushie",
-  "Dead Cat Food","Dwarf Turtle Shelmet","Edible Seaweed","Eerie Toy","Eerie Treat","Exp Share","Exp Share Core",
-  "Fake Neuroscience Degree","Farming Exp Boost","Fishing Exp Boost","Flying Pig","Foraging Exp Boost","Four-Eyed Fish",
-  "Frog Treat","Gold Claws","Grandma's Knitting Needle","Green Bandana","Guardian Lucky Claw","Hardened Scales",
-  "Hephaestus Plushie","Hephaestus Relic","Hephaestus Remedies","Hephaestus Shelmet","Hephaestus Souvenir","Hephaestus Urn",
-  "Iron Claws","Jerry 3D Glasses","Lucky Clover","Mining Exp Boost","Minos Relic","Party Hat","Quick Claw","Radioactive Vial",
-  "Reaper Gem","Reinforced Scales","Saddle","Serrated Claws","Sharpened Claws","Simple Carrot Candy","Spooky Cupcake",
-  "Textbook","Tier Boost","Tier Boost Core","Titanium Minecart","Vampire Fang","Washed-up Souvenir","Yellow Bandana",
+  "All Skills Exp Boost",
+  "All Skills Exp Super-Boost",
+  "Antique Remedies",
+  "Bejeweled Collar",
+  "Big Teeth",
+  "Bigger Teeth",
+  "Bingo Booster",
+  "Brown Bandana",
+  "Bubblegum",
+  "Burnt Texts",
+  "Combat Exp Boost",
+  "Cretan Urn",
+  "Crochet Tiger Plushie",
+  "Dead Cat Food",
+  "Dwarf Turtle Shelmet",
+  "Edible Seaweed",
+  "Eerie Toy",
+  "Eerie Treat",
+  "Exp Share",
+  "Exp Share Core",
+  "Fake Neuroscience Degree",
+  "Farming Exp Boost",
+  "Fishing Exp Boost",
+  "Flying Pig",
+  "Foraging Exp Boost",
+  "Four-Eyed Fish",
+  "Frog Treat",
+  "Gold Claws",
+  "Grandma's Knitting Needle",
+  "Green Bandana",
+  "Guardian Lucky Claw",
+  "Hardened Scales",
+  "Hephaestus Plushie",
+  "Hephaestus Relic",
+  "Hephaestus Remedies",
+  "Hephaestus Shelmet",
+  "Hephaestus Souvenir",
+  "Hephaestus Urn",
+  "Iron Claws",
+  "Jerry 3D Glasses",
+  "Lucky Clover",
+  "Mining Exp Boost",
+  "Minos Relic",
+  "Party Hat",
+  "Quick Claw",
+  "Radioactive Vial",
+  "Reaper Gem",
+  "Reinforced Scales",
+  "Saddle",
+  "Serrated Claws",
+  "Sharpened Claws",
+  "Simple Carrot Candy",
+  "Spooky Cupcake",
+  "Textbook",
+  "Tier Boost",
+  "Tier Boost Core",
+  "Titanium Minecart",
+  "Vampire Fang",
+  "Washed-up Souvenir",
+  "Yellow Bandana",
 ];
 const PETITEM_OPTIONS = listToOptions(PET_ITEM_LABELS);
 
@@ -400,14 +534,15 @@ function applyVerifiedFiltersOrNull(sig, filters) {
   if (userSkin && userSkin !== "none" && sigSkin(sig) !== userSkin) return { ok: false, unverifiable: false };
   if (userPetSkin && userPetSkin !== "none" && sigPetSkin(sig) !== userPetSkin) return { ok: false, unverifiable: false };
   if (userPetLevel > 0 && sigPetLevel(sig) < userPetLevel) return { ok: false, unverifiable: false };
-  if (userPetItem && userPetItem !== "none" && sigPetItem(sig) !== userPetItem) {
-    return { ok: false, unverifiable: false };
-  }
+  if (userPetItem && userPetItem !== "none" && sigPetItem(sig) !== userPetItem) return { ok: false, unverifiable: false };
+
   return { ok: true, unverifiable: false };
 }
 
 /* =========================
    Strict match quality
+   - If stars differ by 1 => PARTIAL
+   - If stars differ by 2+ => NONE
 ========================= */
 function strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters }) {
   if (!sig) return "NONE";
@@ -519,10 +654,10 @@ function scorePartial({ userEnchantsMap, inputStars10, sig, filters }) {
 }
 
 /* =========================
-   ✅ /api/items (FIXED FOR ➋➌➍)
+   ✅ /api/items (FIXED FOR Terminator ➋➌➍ etc)
    - Search: key OR name
-   - Group by baseKeyForDedupe(item_key) (normalizes ➋➌➍ => 2/3/4)
-   - Label from baseKey (so it can never show the suffix)
+   - Label: derived from key (stable)
+   - Deduping: by baseLabelForDedupe(label) (with fancy digit conversion)
 ========================= */
 app.get("/api/items", async (req, res) => {
   try {
@@ -530,7 +665,8 @@ app.get("/api/items", async (req, res) => {
     const limit = Math.min(ITEMS_LIMIT_MAX, Math.max(1, Number(req.query.limit || ITEMS_LIMIT_DEFAULT)));
     if (!qRaw) return res.json({ items: [] });
 
-    const q = qRaw.toLowerCase();
+    // normalize query so searching "Terminator ➋" still hits
+    const q = unicodeNormalize(qRaw).toLowerCase();
 
     const { rows } = await pool.query(
       `
@@ -538,7 +674,7 @@ app.get("/api/items", async (req, res) => {
         SELECT item_key, MAX(ended_ts) AS ts
         FROM sales
         WHERE item_key IS NOT NULL AND item_key <> ''
-          AND (item_key ILIKE '%' || $1 || '%' OR item_name ILIKE '%' || $1 || '%')
+          AND (LOWER(item_key) LIKE '%' || $1 || '%' OR LOWER(COALESCE(item_name,'')) LIKE '%' || $1 || '%')
         GROUP BY item_key
 
         UNION ALL
@@ -546,46 +682,38 @@ app.get("/api/items", async (req, res) => {
         SELECT item_key, MAX(last_seen_ts) AS ts
         FROM auctions
         WHERE item_key IS NOT NULL AND item_key <> ''
-          AND (item_key ILIKE '%' || $1 || '%' OR item_name ILIKE '%' || $1 || '%')
+          AND (LOWER(item_key) LIKE '%' || $1 || '%' OR LOWER(COALESCE(item_name,'')) LIKE '%' || $1 || '%')
         GROUP BY item_key
       )
       SELECT item_key, MAX(ts) AS ts
       FROM c
       GROUP BY item_key
       ORDER BY MAX(ts) DESC
-      LIMIT 2000
+      LIMIT 1000
       `,
       [q]
     );
 
-    // group by baseKey, keep newest canonical key
-    const bestByBase = new Map(); // baseKey -> { baseKey, key, ts }
+    const out = [];
+    const seenKey = new Set();
+    const seenBase = new Set();
+
     for (const r of rows) {
       const key = String(r.item_key || "").trim();
       if (!key) continue;
+      if (seenKey.has(key)) continue;
 
-      const baseKey = baseKeyForDedupe(key);
-      if (!baseKey) continue;
+      const label = labelFromKey(key);
 
-      const ts = Number(r.ts || 0);
-      const prev = bestByBase.get(baseKey);
-      if (!prev || ts > prev.ts) bestByBase.set(baseKey, { baseKey, key, ts });
-    }
+      // HARD base dedupe (this is the entire Terminator fix)
+      const base = baseLabelForDedupe(label);
+      if (!base) continue;
+      if (seenBase.has(base)) continue;
 
-    const grouped = Array.from(bestByBase.values()).sort((a, b) => (b.ts - a.ts));
+      seenKey.add(key);
+      seenBase.add(base);
+      out.push({ key, label });
 
-    const out = [];
-    const seenBaseLabel = new Set();
-
-    for (const g of grouped) {
-      const label = labelFromKey(g.baseKey); // <- baseKey label (never “Terminator 2/➋/③”)
-      const baseLabel = baseLabelForDedupe(label);
-      if (!baseLabel) continue;
-
-      if (seenBaseLabel.has(baseLabel)) continue;
-      seenBaseLabel.add(baseLabel);
-
-      out.push({ key: g.key, label });
       if (out.length >= limit) break;
     }
 
@@ -596,7 +724,7 @@ app.get("/api/items", async (req, res) => {
 });
 
 /* =========================
-   /api/recommend (ACCURATE LBIN)
+   /api/recommend (ACCURATE LBIN + FIXED STAR MATCHING)
 ========================= */
 app.get("/api/recommend", async (req, res) => {
   try {
@@ -658,19 +786,25 @@ app.get("/api/recommend", async (req, res) => {
         final_price: price,
         ended_ts: Number(r.ended_ts) || 0,
         signature: sig,
+
         dstars: sig ? sigDungeonStars(sig) : 0,
         mstars: sig ? sigMasterStars(sig) : 0,
         stars10: sig ? sigStars10(sig) : 0,
+
         wi: sig ? sigWI(sig) : false,
         dye: sig ? sigDye(sig) : "none",
         skin: sig ? sigSkin(sig) : "none",
         petskin: sig ? sigPetSkin(sig) : "none",
         petLevel: sig ? sigPetLevel(sig) : 0,
         petItem: sig ? sigPetItem(sig) : "none",
+
         score: sc.score,
         matched: sc.matched,
         allEnchants: sig
-          ? Array.from(sc.saleEnchants.entries()).map(([k, v]) => ({ tier: tierFor(k, v), label: displayEnchant(k, v) }))
+          ? Array.from(sc.saleEnchants.entries()).map(([k, v]) => ({
+              tier: tierFor(k, v),
+              label: displayEnchant(k, v),
+            }))
           : [],
         unverifiable: sc.unverifiable,
       });
@@ -684,7 +818,7 @@ app.get("/api/recommend", async (req, res) => {
     const rangeLow = pricePool.length ? Math.min(...pricePool) : null;
     const rangeHigh = pricePool.length ? Math.max(...pricePool) : null;
 
-    // LBIN
+    // LBIN (tight window)
     const { rows: liveRows } = await pool.query(
       `
       SELECT uuid, item_name, item_key, bin, start_ts, end_ts, starting_bid,
@@ -733,9 +867,11 @@ app.get("/api/recommend", async (req, res) => {
         start_ts: Number(a.start_ts || 0),
         end_ts: Number(a.end_ts || 0),
         signature: sig,
+
         dstars: sig ? sigDungeonStars(sig) : 0,
         mstars: sig ? sigMasterStars(sig) : 0,
         stars10: sig ? sigStars10(sig) : 0,
+
         petItem: sig ? sigPetItem(sig) : "none",
         score: sc.score,
         matched: sc.matched,
