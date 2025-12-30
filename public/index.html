@@ -193,14 +193,16 @@
                 </div>
                 
                 <div class="field">
-  <label for="advPetItem">Pet Item (optional)</label>
-
-  <div class="select-wrap">
-    <input id="advPetItem" type="text" placeholder="Start typing a pet item..." autocomplete="off" />
+<div class="hero-row hero-row-1">
+  <div class="field">
+    <label for="advPetItem">Pet Item (optional)</label>
+    <div class="suggest-wrap">
+      <input id="advPetItem" type="text" placeholder="Start typing a pet item..." autocomplete="off" />
+      <div class="mod-suggest" id="petItemSuggest" style="display:none;"></div>
+    </div>
   </div>
-
-  <div id="petItemSuggest" class="suggest-box" style="display:none;"></div>
 </div>
+
 
 
                 <div class="hero-row hero-row-1" id="wiRow">
@@ -277,4 +279,5 @@
 
   <script src="script.js" defer></script>
 </body>
+
 </html>
