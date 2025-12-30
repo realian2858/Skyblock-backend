@@ -880,12 +880,6 @@ select option{
    AUTOCOMPLETE FIX (unify mod-suggest + suggest-box)
 ========================= */
 
-/* Allow dropdown to overflow card panels */
-.suggest-wrap,
-.input-wrap {
-  position: relative;
-}
-
 /* Make sure parent cards/panels don't clip dropdowns */
 .card,
 .adv-panel,
@@ -939,3 +933,4 @@ select option{
 .suggest-box .item:hover {
   background: rgba(79,125,255,.14);
 }
+
