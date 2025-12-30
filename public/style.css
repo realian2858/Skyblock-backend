@@ -611,6 +611,22 @@ select option{
   padding-left: 6px;
   opacity: 0.95;
 }
+/* =========================
+   Stars display (Coflnet style)
+========================= */
+.sb-stars{
+  font-family: var(--mono);
+  font-weight: 1000;
+  letter-spacing: .4px;
+  opacity: .95;
+  white-space: nowrap;
+}
+
+.sb-stars .mstar-d{
+  margin-left: 3px;
+  font-size: 13px;
+  opacity: .98;
+}
 
 /* header area */
 .mini-head{
@@ -858,4 +874,68 @@ select option{
 .suggest-box .item:hover {
   background: var(--accent);
   color: white;
+
+}
+/* =========================
+   AUTOCOMPLETE FIX (unify mod-suggest + suggest-box)
+========================= */
+
+/* Allow dropdown to overflow card panels */
+.suggest-wrap,
+.input-wrap {
+  position: relative;
+}
+
+/* Make sure parent cards/panels don't clip dropdowns */
+.card,
+.adv-panel,
+.hero-row,
+.subcard,
+.results {
+  overflow: visible;
+}
+
+/* Unify both dropdown containers */
+.mod-suggest,
+.suggest-box {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 8px);
+  margin-top: 0;
+
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(10,14,22,.98);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--shadow);
+
+  max-height: 240px;
+  overflow: auto;
+
+  z-index: 5000; /* ✅ above everything */
+  display: none;
+
+  font-family: var(--sans);
+}
+
+/* Items inside dropdown */
+.mod-suggest .item,
+.suggest-box .item {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255,255,255,.06);
+  cursor: pointer;
+  color: rgba(255,255,255,.94);
+  font-size: 13.5px;
+  user-select: none;
+}
+
+.mod-suggest .item:last-child,
+.suggest-box .item:last-child {
+  border-bottom: none;
+}
+
+.mod-suggest .item:hover,
+.suggest-box .item:hover {
+  background: rgba(79,125,255,.14);
 }
