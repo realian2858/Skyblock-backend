@@ -1,11 +1,15 @@
-/* public/style.css (FULL REWRITE v10 + LOWEST PRICE & SUGGESTION ADDITIONS) 
+/* public/style.css (FULL REWRITE v11 - FIXED ADVANCED CLIP + UNIFIED AUTOCOMPLETE)
 Goals:
-- PRESERVE ALL ORIGINAL V9/V10 LINES (Market Echoes, compact layout, tier colors, etc.)
-- ADD: Live Signature styling for the Perfect Match field
-- ADD: Improved field-actions spacing to prevent height shifts
-- ADD: Lowest Price visual box inside results
+- Keep your V10 look (Market Echoes, compact layout, tier colors, etc.)
+- Fix "Advanced section disappeared" (was overflow clipping inside .adv-panel)
+- Keep Live Signature styling (even if field not used)
+- Keep Lowest Price box style
+- Unify mod-suggest + suggest-box dropdown behavior
 */
 
+/* =========================
+   Theme
+========================= */
 :root{
   --bg0:#060910;
   --bg1:#0B1423;
@@ -273,23 +277,23 @@ input[type="text"], select{
   transition: box-shadow .12s ease, border-color .12s ease, background .12s ease;
 }
 
-/* NEW: Live Signature Focus Field Styling */
-#advLiveSignature {
-  border-color: rgba(62,230,208, 0.25);
-  background: rgba(62,230,208, 0.05);
-  font-family: var(--mono);
-}
-#advLiveSignature:focus {
-  border-color: var(--accent2);
-  box-shadow: 0 0 0 4px rgba(62,230,208, 0.15);
-}
-
 input[type="text"]::placeholder{ color: rgba(255,255,255,.44); }
 
 input[type="text"]:focus, select:focus{
   border-color: rgba(79,125,255,.62);
   box-shadow: 0 0 0 4px rgba(79,125,255,.14);
   background: rgba(0,0,0,.34);
+}
+
+/* Live Signature Focus Field Styling (kept, harmless if unused) */
+#advLiveSignature{
+  border-color: rgba(62,230,208, 0.25);
+  background: rgba(62,230,208, 0.05);
+  font-family: var(--mono);
+}
+#advLiveSignature:focus{
+  border-color: var(--accent2);
+  box-shadow: 0 0 0 4px rgba(62,230,208, 0.15);
 }
 
 /* ✅ Better select + options visibility */
@@ -304,7 +308,6 @@ select{
   background-size: 6px 6px, 6px 6px;
   background-repeat: no-repeat;
 }
-
 select option{
   background: #0c1422;
   color: rgba(255,255,255,.95);
@@ -364,53 +367,38 @@ select option{
 .btn-icon:hover{ background: rgba(255,255,255,.10); }
 
 /* =========================
-    Suggestions dropdown
+    Suggestions dropdown (BASE)
 ========================= */
 .suggest-wrap{ position:relative; }
-.mod-suggest{
-  position:absolute;
-  left:0; right:0;
-  margin-top:8px;
-  border-radius:14px;
-  border:1px solid rgba(255,255,255,.12);
-  background: rgba(10,14,22,.98);
-  backdrop-filter: blur(10px);
-  box-shadow: var(--shadow);
-  max-height:240px;
-  overflow:auto;
-  z-index:1000;
-  display: none;
-}
-.mod-suggest .item{
-  padding:10px 12px;
-  border-bottom:1px solid rgba(255,255,255,.06);
-  cursor:pointer;
-  color: rgba(255,255,255,.94);
-  font-size: 13.5px;
-}
-.mod-suggest .item:hover{ background: rgba(79,125,255,.14); }
 
 /* =========================
     Advanced layout (match bottoms)
+    FIX: remove clipping + allow content to be visible
 ========================= */
 .adv-split{
   display:grid;
   grid-template-columns: 640px 1fr;
   gap:14px;
   padding:14px;
-  align-items:stretch;   /* ✅ makes both panels same height */
+  align-items:stretch;
 }
 
+/* ✅ IMPORTANT FIX:
+   - overflow:hidden was clipping the rest of the advanced inputs when height collapsed
+   - keep rounded corners on inner panels via background + border radius
+*/
 .adv-panel{
   border-radius:16px;
   border:1px solid rgba(255,255,255,.10);
   background: rgba(0,0,0,.16);
-  overflow:hidden;
+
+  overflow: visible;     /* ✅ do NOT clip panel contents */
   display:flex;
-  flex-direction:column; /* ✅ enables inner stretching */
-  min-height: 100%;
+  flex-direction:column;
+  min-height: 0;         /* ✅ required for nested grid/flex sizing */
 }
 
+/* Keep header fixed; body can grow naturally */
 .adv-panel-head{
   padding:12px 14px;
   border-bottom:1px solid rgba(255,255,255,.08);
@@ -445,8 +433,12 @@ select option{
 }
 .hero-row-1{ padding: 10px 14px; }
 
-/* NEW: Adjusted to accommodate Live Signature without stretching layout */
-.field-actions{ display:flex; flex-direction: column; gap: 0; }
+/* keep button area stable */
+.field-actions{
+  display:flex;
+  flex-direction:column;
+  gap:0;
+}
 
 /* Range row */
 .range-row{
@@ -506,7 +498,7 @@ select option{
 }
 
 /* =========================
-    Recommendation card: make it compact so everything fits
+    Recommendation card: compact so everything fits
 ========================= */
 .results{ padding: 0 14px 14px; }
 
@@ -526,7 +518,7 @@ select option{
 .result-pre{ padding: 10px 12px; }
 
 #advOut{
-  max-height: 210px; /* ✅ less tall to avoid scroll */
+  max-height: 210px;
   overflow:auto;
   font-family: var(--mono);
   font-size: 12.5px;
@@ -551,8 +543,8 @@ select option{
   padding:8px 10px;
 }
 
-/* ADDED: Lowest Price Specialized Box */
-.out-box-lowest {
+/* Lowest Price Specialized Box (kept) */
+.out-box-lowest{
   border-color: rgba(62,230,208,.3);
   background: rgba(62,230,208,.05);
 }
@@ -583,7 +575,7 @@ select option{
 }
 
 /* =========================
-    Market Echoes: stretch to match left panel bottom
+    Market Echoes
 ========================= */
 .top3-grid{
   padding:12px;
@@ -591,8 +583,8 @@ select option{
   grid-template-columns: repeat(3, minmax(240px, 1fr));
   gap:12px;
   align-items:stretch;
-  flex: 1;                  /* ✅ fill remaining panel height */
-  min-height: 0;           /* ✅ allow internal fitting */
+  flex: 1;
+  min-height: 0;
 }
 
 .mini-card{
@@ -603,17 +595,17 @@ select option{
   overflow:hidden;
   display:flex;
   flex-direction:column;
-  min-height: 0;           /* ✅ grid stretch */
+  min-height: 0;
 }
+
 .mstar-num{
   font-weight: 900;
   font-size: 14px;
   padding-left: 6px;
   opacity: 0.95;
 }
-/* =========================
-   Stars display (Coflnet style)
-========================= */
+
+/* Stars display (Coflnet style) */
 .sb-stars{
   font-family: var(--mono);
   font-weight: 1000;
@@ -621,7 +613,6 @@ select option{
   opacity: .95;
   white-space: nowrap;
 }
-
 .sb-stars .mstar-d{
   margin-left: 3px;
   font-size: 13px;
@@ -674,7 +665,7 @@ select option{
 
 .mini-scroll{
   margin-top:8px;
-  overflow:hidden; 
+  overflow:hidden;
   padding-right:0;
 }
 
@@ -695,7 +686,7 @@ select option{
 }
 
 /* =========================
-    Enchants list (more compact)
+    Enchants list
 ========================= */
 .ench-list{ margin-top:8px; display:flex; flex-direction:column; gap:6px; }
 .ench-more{ opacity:.70; margin-top:6px; font-size: 11.5px; }
@@ -719,7 +710,7 @@ select option{
 }
 
 .ench-text{
-  font-size: 12.2px;   
+  font-size: 12.2px;
   font-weight: 900;
   line-height: 1.18;
   color: var(--tier-misc);
@@ -735,24 +726,26 @@ select option{
   background: rgba(181,107,255,.10);
   color: rgba(220,190,255,.95);
 }
-.perfect-match-highlight {
-    border: 2px solid var(--accent2) !important;
-    box-shadow: 0 0 15px rgba(62, 230, 208, 0.4);
-    position: relative;
+
+/* old “perfect match” styles kept (harmless) */
+.perfect-match-highlight{
+  border: 2px solid var(--accent2) !important;
+  box-shadow: 0 0 15px rgba(62, 230, 208, 0.4);
+  position: relative;
+}
+.perfect-badge{
+  position: absolute;
+  top: -10px;
+  right: 10px;
+  background: var(--accent2);
+  color: #000;
+  font-weight: 1000;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  z-index: 5;
 }
 
-.perfect-badge {
-    position: absolute;
-    top: -10px;
-    right: 10px;
-    background: var(--accent2);
-    color: #000;
-    font-weight: 1000;
-    font-size: 10px;
-    padding: 2px 8px;
-    border-radius: 4px;
-    z-index: 5;
-}
 /* =========================
     Metrics (Basics)
 ========================= */
@@ -849,88 +842,60 @@ select option{
 }
 
 /* =========================
-    AUTOCOMPLETE UI ADDITION
+    AUTOCOMPLETE (UNIFIED)
 ========================= */
-.suggest-box {
-  position: absolute;
-  background: #121826;
-  border: 1px solid var(--accent);
-  border-radius: 8px;
-  z-index: 1000;
-  max-height: 250px;
-  overflow-y: auto;
-  box-shadow: 0 10px 25px rgba(0,0,0,0.5);
-  display: none;
-}
-.input-wrap { position: relative; }
-.suggest-box .item {
-  padding: 10px 14px;
-  cursor: pointer;
-  border-bottom: 1px solid var(--stroke);
-  font-size: 13px;
-  color: var(--text);
-}
-.suggest-box .item:last-child { border-bottom: none; }
-.suggest-box .item:hover {
-  background: var(--accent);
-  color: white;
-
-}
-/* =========================
-   AUTOCOMPLETE FIX (unify mod-suggest + suggest-box)
-========================= */
-
-/* Make sure parent cards/panels don't clip dropdowns */
-.card,
-.adv-panel,
-.hero-row,
-.subcard,
-.results {
-  overflow: visible;
-}
-
-/* Unify both dropdown containers */
-.mod-suggest,
-.suggest-box {
-  position: absolute;
-  left: 0;
-  right: 0;
+.suggest-box,
+.mod-suggest{
+  position:absolute;
+  left:0;
+  right:0;
   top: calc(100% + 8px);
   margin-top: 0;
 
-  border-radius: 14px;
-  border: 1px solid rgba(255,255,255,.12);
+  border-radius:14px;
+  border:1px solid rgba(255,255,255,.12);
   background: rgba(10,14,22,.98);
   backdrop-filter: blur(10px);
   box-shadow: var(--shadow);
 
-  max-height: 240px;
-  overflow: auto;
+  max-height:240px;
+  overflow:auto;
 
-  z-index: 5000; /* ✅ above everything */
-  display: none;
-
+  z-index:5000;
+  display:none;
   font-family: var(--sans);
 }
 
-/* Items inside dropdown */
 .mod-suggest .item,
-.suggest-box .item {
-  padding: 10px 12px;
-  border-bottom: 1px solid rgba(255,255,255,.06);
-  cursor: pointer;
+.suggest-box .item{
+  padding:10px 12px;
+  border-bottom:1px solid rgba(255,255,255,.06);
+  cursor:pointer;
   color: rgba(255,255,255,.94);
   font-size: 13.5px;
-  user-select: none;
+  user-select:none;
 }
-
 .mod-suggest .item:last-child,
-.suggest-box .item:last-child {
-  border-bottom: none;
+.suggest-box .item:last-child{
+  border-bottom:none;
 }
-
 .mod-suggest .item:hover,
-.suggest-box .item:hover {
+.suggest-box .item:hover{
   background: rgba(79,125,255,.14);
 }
 
+/* The wrappers must be relative so dropdown anchors correctly */
+.suggest-wrap,
+.input-wrap,
+.select-wrap{
+  position: relative;
+}
+
+/* IMPORTANT:
+   Allow dropdowns to escape containers, but keep your cards clipped normally.
+   We only relax overflow where dropdowns live. */
+.hero-row,
+.subcard,
+.results{
+  overflow: visible;
+}
