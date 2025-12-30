@@ -1,4 +1,4 @@
-// parseLore.js (v6 - Coflnet stars + WI case-safe + pet item + stable exports)
+// parseLore.js (v7 - FIXED Coflnet 10★ parsing + last-star-cluster logic + stable exports)
 //
 // Exports used by server.js/ingest.js:
 // cleanText, normKey, normalizeEnchantKey,
@@ -8,11 +8,12 @@
 // coflnetStars10FromText,
 // buildSignature({ itemName, lore, tier, itemBytes })
 //
-// NEW in v6:
-// ✅ Coflnet star parsing: "✪✪✪✪✪➌" => 8 (5 + 3)
-// ✅ Handles weird symbols between name and stars
-// ✅ If NBT stars missing, falls back to coflnet parsing from itemName/lore
-// ✅ WI detection: canonical key lowercase + scroll tokens case-insensitive
+// Fixes:
+// ✅ Reads "✪✪✪✪✪➎" as 10 (even if junk/spacing/icons/color codes in between)
+// ✅ Supports circle stars: ● ⬤ and common star glyphs
+// ✅ Parses ONLY the final star cluster (doesn't get confused by lore lines)
+// ✅ Prefers NBT upgrade_level when present, else falls back to Coflnet text parsing
+// ✅ WI detection case-safe
 
 import { gunzipSync } from "node:zlib";
 import { parse as parseNbt } from "prismarine-nbt";
@@ -20,9 +21,13 @@ import { parse as parseNbt } from "prismarine-nbt";
 /* =========================
    Text normalize
 ========================= */
+function stripMcFormatting(s) {
+  // Remove Minecraft formatting codes like §a, §l, etc.
+  return String(s ?? "").replace(/§./g, "");
+}
+
 export function cleanText(s) {
-  let x = String(s ?? "").normalize("NFKC");
-  x = x.replace(/§./g, "");
+  let x = stripMcFormatting(String(s ?? "")).normalize("NFKC");
   x = x.replace(/[’]/g, "'");
   x = x.replace(/[^\p{L}\p{N}\s']/gu, " ");
   x = x.replace(/\s+/g, " ").trim();
@@ -46,74 +51,113 @@ const DIGIT_CHAR_MAP = (() => {
   const addRange = (startDigit, chars) => {
     for (let i = 0; i < chars.length; i++) map.set(chars[i], String(startDigit + i));
   };
+
+  // circled / fullwidth
   addRange(0, "⓪①②③④⑤⑥⑦⑧⑨");
   addRange(0, "０１２３４５６７８９");
+
+  // dingbat / negative circled
   addRange(1, "➊➋➌➍➎➏➐➑➒➓");
   addRange(1, "❶❷❸❹❺❻❼❽❾❿");
   addRange(1, "⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾");
+
+  // superscripts/subscripts
   addRange(0, "⁰¹²³⁴⁵⁶⁷⁸⁹");
   addRange(0, "₀₁₂₃₄₅₆₇₈₉");
+
   return map;
 })();
 
 function normalizeWeirdDigits(s) {
-  const x = String(s ?? "").normalize("NFKD");
+  const x = stripMcFormatting(String(s ?? "")).normalize("NFKC");
   let out = "";
   for (const ch of x) out += DIGIT_CHAR_MAP.get(ch) ?? ch;
   return out;
 }
 
 /* =========================
-   Coflnet star parsing
+   Coflnet star parsing (ROBUST)
    Examples:
      "Withered Dark Claymore ✪✪✪✪✪➌" => 8
      "Item ✪✪✪✪✪➎" => 10
+     "Item ●●●●●➎" => 10
      "Item ✪✪✪" => 3
-   Handles random symbols between name and stars.
+   Handles random symbols between stars and digit.
 ========================= */
-const STAR_RE = /[✪★☆✯✰]/g;
+
+// Include circle-style “stars” used by some UIs
+const STAR_CHARS = new Set(["✪", "★", "☆", "✯", "✰", "●", "⬤", "•"]);
+function isStarChar(ch) {
+  return STAR_CHARS.has(ch);
+}
 
 // returns 0..10
 export function coflnetStars10FromText(text) {
-  const s = normalizeWeirdDigits(String(text ?? "")).normalize("NFKC");
+  const s0 = normalizeWeirdDigits(text);
+  const s = String(s0 ?? "").normalize("NFKC");
   if (!s) return 0;
 
-  // count star glyphs
-  const starMatches = s.match(/[✪★☆✯✰]/g) || [];
-  const starCount = Math.min(5, starMatches.length);
-
-  if (starCount === 0) return 0;
-
-  // IMPORTANT: Only use digit add-on if base stars == 5
-  // Find the substring after the last star and grab first digit
-  if (starCount === 5) {
-    const lastStar = Math.max(
-      s.lastIndexOf("✪"),
-      s.lastIndexOf("★"),
-      s.lastIndexOf("☆"),
-      s.lastIndexOf("✯"),
-      s.lastIndexOf("✰")
-    );
-
-    if (lastStar >= 0) {
-      // allow random symbols/spaces between stars and the digit
-      const tail = s.slice(lastStar + 1);
-      const m = tail.match(/(\d)/); // after normalizeWeirdDigits, ➎ becomes "5"
-      if (m) {
-        const d = Number(m[1]);
-        if (Number.isFinite(d) && d >= 1 && d <= 5) {
-          return 5 + d; // ✪✪✪✪✪➎ => 10
-        }
-      }
+  // Find the LAST star-like char in the string (stars are typically at the end)
+  let lastStarIdx = -1;
+  for (let i = s.length - 1; i >= 0; i--) {
+    if (isStarChar(s[i])) {
+      lastStarIdx = i;
+      break;
     }
-    // If no digit found, it's just 5
-    return 5;
+  }
+  if (lastStarIdx < 0) return 0;
+
+  // Count the star cluster ending at lastStarIdx (ignore earlier stars in lore text)
+  // We allow small gaps of spaces/punct between stars (some formats do that).
+  let starCount = 0;
+  let i = lastStarIdx;
+  let gapBudget = 8; // tolerate a few separators between stars
+
+  while (i >= 0 && starCount < 5) {
+    const ch = s[i];
+    if (isStarChar(ch)) {
+      starCount++;
+      gapBudget = 8; // reset gap budget after finding a star
+      i--;
+      continue;
+    }
+
+    // allow a few harmless separators between stars (spaces, bullets, pipes, etc.)
+    if (gapBudget > 0 && /[\s·•|:()\[\]{}<>~\-_=+.,]/.test(ch)) {
+      gapBudget--;
+      i--;
+      continue;
+    }
+
+    break;
   }
 
-  // If less than 5 stars, total is just the stars
-  return starCount;
-}
+  if (starCount <= 0) return 0;
+  if (starCount < 5) return starCount;
 
+  // starCount == 5 -> try to read the addon digit (1..5) AFTER the last star cluster
+  // allow junk symbols between last star and digit
+  const tail = s.slice(lastStarIdx + 1);
+
+  // First try: a digit 1..5 somewhere shortly after
+  const mDigit = tail.match(/[1-5]/);
+  if (mDigit) {
+    const d = Number(mDigit[0]);
+    if (d >= 1 && d <= 5) return 5 + d;
+  }
+
+  // Second try: roman numerals I..V (sometimes shows up)
+  const mRoman = tail.match(/\b(i{1,3}|iv|v)\b/i);
+  if (mRoman) {
+    const r = mRoman[1].toLowerCase();
+    const map = { i: 1, ii: 2, iii: 3, iv: 4, v: 5 };
+    const d = map[r] ?? 0;
+    if (d >= 1 && d <= 5) return 5 + d;
+  }
+
+  // If addon missing, treat as 5
+  return 5;
+}
 
 /* =========================
    Unicode variant stripping (for item key)
@@ -161,8 +205,10 @@ export function canonicalItemKey(name) {
   let s = String(name ?? "");
 
   s = stripVariantDigits(s);
-  s = s.replace(/§./g, "");
-  s = s.replace(/[✪★☆✯✰]+/g, " ");
+  s = stripMcFormatting(s);
+
+  // Remove star/circle-star glyphs from key
+  s = s.replace(/[✪★☆✯✰●⬤•]+/g, " ");
 
   s = s.replace(/\(([^)]*)\)/g, " ");
   s = s.replace(/\[([^\]]*)\]/g, " ");
@@ -414,16 +460,12 @@ function canonicalPetItemKey(label) {
   return k || "";
 }
 
-function stripMcColors(s) {
-  return String(s ?? "").replace(/§./g, "");
-}
-
 function parsePetHeldItemFromLore(loreRaw) {
-  const lore = String(loreRaw || "");
-  const lines = lore.split("\n").map(stripMcColors);
+  const lore = stripMcFormatting(String(loreRaw || ""));
+  const lines = lore.split("\n");
 
   for (const rawLine of lines) {
-    const line = rawLine.normalize("NFKC").trim();
+    const line = String(rawLine).normalize("NFKC").trim();
     let m = line.match(/^(held item|pet item)\s*:\s*(.+)$/i);
     if (!m) m = line.match(/^(held item|pet item)\s+(.+)$/i);
     if (m) return cleanText(m[2]).trim();
@@ -562,19 +604,20 @@ function extractStars(extra, itemName, loreRaw) {
   const u = Number(extra?.upgrade_level ?? 0);
   const d = Number(extra?.dungeon_item_level ?? 0);
 
-  // Prefer NBT if it exists
+  // Prefer NBT total stars if it exists
   if (Number.isFinite(u) && u > 0) {
     const total = Math.max(0, Math.min(10, Math.trunc(u)));
     if (total <= 5) return { dstars: total, mstars: 0 };
     return { dstars: 5, mstars: total - 5 };
   }
 
+  // dungeon_item_level sometimes stores dungeon stars
   if (Number.isFinite(d) && d > 0) {
     const dstars = Math.max(0, Math.min(5, Math.trunc(d)));
     return { dstars, mstars: 0 };
   }
 
-  // Coflnet fallback from itemName OR lore
+  // Coflnet fallback from itemName OR lore (take max)
   const fromName = coflnetStars10FromText(itemName);
   const fromLore = coflnetStars10FromText(loreRaw);
   const total = Math.max(fromName, fromLore);
@@ -583,7 +626,6 @@ function extractStars(extra, itemName, loreRaw) {
   if (total <= 5) return { dstars: total, mstars: 0 };
   return { dstars: 5, mstars: total - 5 };
 }
-
 
 function extractPetLevel(extra, itemName) {
   const petInfo = extra?.petInfo;
@@ -615,8 +657,7 @@ function extractCosmetics(extra) {
 }
 
 function extractWitherImpactFlag(itemName, rootParsed) {
-  const key = canonicalItemKey(itemName); // already lower-ish tokens
-  const k = normKey(key); // ensure lowercase normalized
+  const k = normKey(canonicalItemKey(itemName));
   const isBlade =
     k.includes("hyperion") || k.includes("astraea") || k.includes("scylla") || k.includes("valkyrie");
   if (!isBlade) return false;
@@ -655,10 +696,9 @@ export async function buildSignature({ itemName = "", lore = "", tier = "", item
   if (petskin && petskin !== "none") parts.push(`petskin:${petskin}`);
   if (petHeld?.key) parts.push(`pet_item:${petHeld.key}`);
 
-  // Optional: also store stars10 directly for easy debugging/queries
+  // Store stars10 explicitly (server should prefer this)
   const stars10 = Math.max(0, Math.min(10, (dstars || 0) + (mstars || 0)));
   if (stars10) parts.push(`stars10:${stars10}`);
 
   return [...parts, ...enchTokens].join("|");
 }
-
