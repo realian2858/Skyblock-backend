@@ -80,7 +80,7 @@ function prettyFromKey(k) {
    - COFLNET style: 5 icons + master dingbat for 6–10
    - Your server output uses circles ○● sometimes. We support both.
 ========================= */
-const STAR_ICON_RE = /[✪✦★☆✯✰✫✬✭✮]/g;           // star icons
+const STAR_ICON_RE = /[✪✦★☆✯✰✫✬✭✮●⬤○◉◎◍]/g;           // star icons
 const CIRCLE_ICON_RE = /[●○◉◎◍]/g;                // circle icons used by some outputs
 const MASTER_DINGBAT_RE = /[➊➋➌➍➎]/g;
 
@@ -913,3 +913,4 @@ document.addEventListener("DOMContentLoaded", () => {
 
   renderTop3Rail([]);
 });
+
