@@ -13,6 +13,7 @@
 // ✅ If upgrade_level <= 5, treat it as master stars when dungeon_item_level exists
 // ✅ Remove "•" from star chars (bullets cause false positives)
 // ✅ Only parse the final star cluster near the end (prevents lore bullet confusion)
+// ✅ FIX: include white/outlined circle-stars (○◉◎◍) in star parsing + key stripping (master stars show + 10★ reads)
 
 import { gunzipSync } from "node:zlib";
 import { parse as parseNbt } from "prismarine-nbt";
@@ -70,7 +71,8 @@ function normalizeWeirdDigits(s) {
    Coflnet star parsing (ROBUST + SAFE)
 ========================= */
 // IMPORTANT: do NOT include "•" here (bullets appear everywhere)
-const STAR_CHARS = new Set(["✪", "★", "☆", "✯", "✰", "●", "⬤"]);
+// ✅ include white/outlined circle-stars too (these are what you’re showing in UI)
+const STAR_CHARS = new Set(["✪", "★", "☆", "✯", "✰", "●", "⬤", "○", "◉", "◎", "◍"]);
 function isStarChar(ch) {
   return STAR_CHARS.has(ch);
 }
@@ -191,7 +193,7 @@ export function canonicalItemKey(name) {
   s = stripMcFormatting(s);
 
   // Remove star/circle-star glyphs from key
-  s = s.replace(/[✪★☆✯✰●⬤]+/g, " ");
+  s = s.replace(/[✪★☆✯✰●⬤○◉◎◍]+/g, " ");
 
   s = s.replace(/\(([^)]*)\)/g, " ");
   s = s.replace(/\[([^\]]*)\]/g, " ");
