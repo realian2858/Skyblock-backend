@@ -84,7 +84,7 @@ export function coflnetStars10FromText(text) {
   if (!s) return 0;
 
   // Only trust a star cluster near the end (item name suffix)
-  const SEARCH_WINDOW = 48;
+  const SEARCH_WINDOW = 64;
   const start = Math.max(0, s.length - SEARCH_WINDOW);
   const tailWindow = s.slice(start);
 
@@ -100,16 +100,16 @@ export function coflnetStars10FromText(text) {
 
   const lastStarIdx = start + lastStarIdxLocal;
 
-  // Count up to 5 stars backwards with small separator tolerance
+  // ✅ Count backwards up to 10 stars (supports "10 circle stars" format)
   let starCount = 0;
   let i = lastStarIdx;
-  let gapBudget = 8;
+  let gapBudget = 10;
 
-  while (i >= 0 && starCount < 5) {
+  while (i >= 0 && starCount < 10) {
     const ch = s[i];
     if (isStarChar(ch)) {
       starCount++;
-      gapBudget = 8;
+      gapBudget = 10;
       i--;
       continue;
     }
@@ -122,10 +122,15 @@ export function coflnetStars10FromText(text) {
   }
 
   if (starCount <= 0) return 0;
+
+  // If we actually saw 6..10 stars glyphs, trust that total directly.
+  if (starCount >= 6) return Math.min(10, starCount);
+
+  // starCount is 1..5
   if (starCount < 5) return starCount;
 
-  // starCount == 5 -> look for addon digit 1..5 shortly after last star
-  const after = s.slice(lastStarIdx + 1, lastStarIdx + 24);
+  // starCount == 5 -> check for addon digit 1..5 (Coflnet-style master stars)
+  const after = s.slice(lastStarIdx + 1, lastStarIdx + 32);
 
   const mDigit = after.match(/[1-5]/);
   if (mDigit) {
@@ -143,6 +148,7 @@ export function coflnetStars10FromText(text) {
 
   return 5;
 }
+
 
 /* =========================
    Unicode variant stripping (for item key)
@@ -694,3 +700,4 @@ export async function buildSignature({ itemName = "", lore = "", tier = "", item
 
   return [...parts, ...enchTokens].join("|");
 }
+
