@@ -1,11 +1,4 @@
-// public/script.js (FULL REWRITE v4 - Coflnet stars display + stars10-first)
-// Intent matched:
-// ✅ Stars display: show 5 ✪ icons for ANY starred item, plus master-star dingbat digit (➊..➎) if stars10>5
-// ✅ Uses stars10 if present; falls back to dstars+mstars
-// ✅ Removed Live Signature support entirely
-// ✅ Added Pet Item local autocomplete using PET_ITEM_LIST
-// ✅ Keeps PARTIAL tier tag as data-tier="PARTIAL" for purple styling
-// ✅ WI toggle only shows for Wither Blades
+// public/script.js (v5 - FIXED WI VISIBILITY + robust wither blade detection)
 
 function $(id) { return document.getElementById(id); }
 
@@ -83,42 +76,49 @@ function prettyFromKey(k) {
 }
 
 /* =========================
-   Wither Impact visibility
+   Wither Impact visibility (FIXED)
+   - Only toggles #wiRow (never hides other rows)
+   - Robust matching: Hyperion / hyperion / Withered Hyperion / etc.
 ========================= */
-function isWitherBladeKey(itemKeyOrLabel) {
-  const k = String(itemKeyOrLabel || "").trim().toLowerCase();
-  return k === "hyperion" || k === "scylla" || k === "valkyrie" || k === "astraea";
+function normItemKey(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/§./g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+function isWitherBlade(itemKeyOrLabel) {
+  const k = normItemKey(itemKeyOrLabel);
+  // matches exact word OR part of name
+  return (
+    k.includes("hyperion") ||
+    k.includes("scylla") ||
+    k.includes("valkyrie") ||
+    k.includes("astraea")
+  );
 }
 function updateWIVisibility() {
   const itemEl = $("advItem");
+  const wiRow = $("wiRow");
   const wiEl = $("advWI");
-  if (!itemEl || !wiEl) return;
+  if (!itemEl || !wiRow || !wiEl) return;
 
-  const row = wiEl.closest(".toggle-row") || wiEl.closest(".field") || wiEl.parentElement;
-  const key = (itemEl.dataset.key || itemEl.value || "").trim();
-  const show = isWitherBladeKey(key);
+  const raw = (itemEl.dataset.key || itemEl.value || "").trim();
+  const show = isWitherBlade(raw);
 
-  if (row) row.style.display = show ? "" : "none";
-  else wiEl.style.display = show ? "" : "none";
-
+  wiRow.style.display = show ? "" : "none";
   if (!show) wiEl.checked = false;
 }
 
 /* =========================
    Stars rendering (COFLNET STYLE)
-   Intent:
-   - If item has ANY stars (stars10 >= 1), show "✪✪✪✪✪"
-   - If stars10 > 5, append master star digit as dingbat: ➊➋➌➍➎
-   - Prefer stars10; fallback to dstars+mstars
 ========================= */
 function clampInt(n, lo, hi) {
   const x = Math.trunc(Number(n) || 0);
   if (!Number.isFinite(x)) return lo;
   return Math.max(lo, Math.min(hi, x));
 }
-
 const MS_DINGBAT = { 1: "➊", 2: "➋", 3: "➌", 4: "➍", 5: "➎" };
-
 function computeStars10({ stars10, dstars, mstars }) {
   const s10 = clampInt(stars10, 0, 10);
   if (s10 > 0) return s10;
@@ -126,7 +126,6 @@ function computeStars10({ stars10, dstars, mstars }) {
   const ms = clampInt(mstars, 0, 5);
   return clampInt(ds + ms, 0, 10);
 }
-
 function renderStarsHtmlFromObj(obj) {
   const s10 = computeStars10(obj || {});
   if (s10 <= 0) return "";
@@ -429,7 +428,7 @@ function setupAutocomplete({ inputId, boxId, endpoint, limit = 30, onPick }) {
     input.dataset.key = el.dataset.key || "";
     hide();
     input.focus();
-    onPick?.(input.dataset.key || "");
+    onPick?.(input.dataset.key || input.value || "");
   });
 
   document.addEventListener("click", (e) => {
@@ -573,16 +572,13 @@ function setupEnchantAutocomplete() {
 }
 
 /* =========================
-   Recommend API call
+   Recommend API call + render
 ========================= */
-async function fetchRecommended({
-  item, stars10, enchants, wi, rarity, dye, skin, petlvl, petskin, petitem,
-}) {
+async function fetchRecommended({ item, stars10, enchants, wi, rarity, dye, skin, petlvl, petskin, petitem }) {
   const params = new URLSearchParams();
   params.set("item", item);
   params.set("stars10", String(stars10 || 0));
   params.set("enchants", enchants || "");
-
   if (wi) params.set("wi", "1");
   if (rarity) params.set("rarity", rarity);
   if (dye) params.set("dye", dye);
@@ -597,9 +593,6 @@ async function fetchRecommended({
   return data;
 }
 
-/* =========================
-   Render Top 3 rail
-========================= */
 function renderTop3Rail(top3) {
   const rail = $("top3Rail");
   if (!rail) return;
@@ -616,8 +609,6 @@ function renderTop3Rail(top3) {
 
   rail.innerHTML = top3.slice(0, 3).map((m, idx) => {
     const name = escapeHtml(m.item_name ?? "—");
-
-    // ✅ stars10-first, fallback to dstars+mstars
     const starsHtml = renderStarsHtmlFromObj({
       stars10: m.stars10,
       dstars: m.dstars ?? m.dungeonStars,
@@ -688,9 +679,6 @@ function renderTop3Rail(top3) {
   }).join("");
 }
 
-/* =========================
-   Advanced output
-========================= */
 function renderAdvanced(outEl, data) {
   const rec = Number(data?.recommended);
   const rl = Number(data?.range_low);
@@ -734,9 +722,6 @@ function renderAdvanced(outEl, data) {
   renderTop3Rail(Array.isArray(data.top3) ? data.top3 : []);
 }
 
-/* =========================
-   Advanced run
-========================= */
 async function runAdvancedMode() {
   const out = $("advOut");
   const btn = $("advBtn");
@@ -808,6 +793,9 @@ async function runAdvancedMode() {
 document.addEventListener("DOMContentLoaded", () => {
   document.querySelectorAll(".browse-tabs .tab").forEach((t) => {
     t.addEventListener("click", () => setView(t.dataset.view));
+  });
+  document.querySelectorAll(".js-nav").forEach((b) => {
+    b.addEventListener("click", () => setView(b.dataset.view));
   });
 
   setView("basics");
