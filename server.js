@@ -9,6 +9,11 @@
 // ✅ Stars computed Coflnet-style: "✪✪✪✪✪➌" => 8 stars10
 // ✅ WI detection accepts 1/true/yes and parseLore detects scrolls case-safe
 // ✅ item_key canonicalized (Hyperion vs hyperion works)
+//
+// ✅ FIX (stars10 ingestion + display):
+//    - stripStarGlyphs now strips circle-stars (○◉◎◍●⬤•) AND trailing star digits (dingbat/circled/ascii)
+//    - itemKey derivation now strips star glyphs BEFORE canonicalItemKey so 10★ queries match correctly
+//    - live + sales outputs return clean item_name (no star glyphs embedded)
 
 import path from "path";
 import { fileURLToPath } from "url";
@@ -54,7 +59,10 @@ const LIVE_SCAN_LIMIT = 4000;
 ========================= */
 function stripStarGlyphs(s) {
   return String(s || "")
-    .replace(/[✪★☆✯✰●]+/g, "")
+    // star/circle glyphs used in names (Hypixel/Coflnet style)
+    .replace(/[✪★☆✯✰●⬤•○◉◎◍]+/g, "")
+    // remove a trailing "master digit" if it was rendered as dingbat/circled/ascii (after stripping stars)
+    .replace(/\s*(?:[➊➋➌➍➎➏➐➑➒➓❶❷❸❹❺❻❼❽❾❿⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾①②③④⑤⑥⑦⑧⑨⓪0-9])\s*$/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -109,7 +117,7 @@ const REFORGE_RE = new RegExp(
 function stripNonWordButKeepNice(s) {
   const x = normalizeWeirdDigits(s);
   return x
-    .replace(/[✪★☆✯✰●]+/g, "")
+    .replace(/[✪★☆✯✰●⬤•○◉◎◍]+/g, "")
     .replace(/[^\p{L}\p{N}\s'\-]/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -598,7 +606,9 @@ app.get("/api/recommend", async (req, res) => {
 
     const itemKeyFromClient = String(req.query.item_key || "").trim();
     const itemRaw = itemKeyFromClient || String(req.query.item || "");
-    const itemKey = canonicalItemKey(normalizeWeirdDigits(itemRaw));
+
+    // ✅ IMPORTANT: strip stars/circle-stars/dingbats BEFORE canonicalization
+    const itemKey = canonicalItemKey(normalizeWeirdDigits(stripStarGlyphs(itemRaw)));
 
     if (!itemKey) {
       return res.json({ recommended: null, top3: [], count: 0, note: "Pick an item from suggestions.", live: null });
