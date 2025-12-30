@@ -11,7 +11,6 @@ import express from "express";
 import pg from "pg";
 import dotenv from "dotenv";
 
-import { syncOnce } from "./ingest.js";
 import {
   normKey,
   canonicalItemKey,
@@ -837,5 +836,6 @@ app.listen(PORT, "0.0.0.0", async () => {
     catch (e) { console.error("Sync error:", e?.message || e); }
   }, 60_000);
 });
+
 
 
