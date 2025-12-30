@@ -1,10 +1,10 @@
-// public/script.js (FULL REWRITE v3)
-// Changes in this rewrite:
-// ✅ Stars display: ALWAYS shows 5 ✪ icons when starred, plus master-star number (if any)
-// ✅ Removed Live Signature (Perfect Match) support entirely
-// ✅ Added Pet Item (optional) local autocomplete using PET_ITEM_LIST
+// public/script.js (FULL REWRITE v4 - Coflnet stars display + stars10-first)
+// Intent matched:
+// ✅ Stars display: show 5 ✪ icons for ANY starred item, plus master-star dingbat digit (➊..➎) if stars10>5
+// ✅ Uses stars10 if present; falls back to dstars+mstars
+// ✅ Removed Live Signature support entirely
+// ✅ Added Pet Item local autocomplete using PET_ITEM_LIST
 // ✅ Keeps PARTIAL tier tag as data-tier="PARTIAL" for purple styling
-// ✅ Autocomplete dedupe + abort handling kept
 // ✅ WI toggle only shows for Wither Blades
 
 function $(id) { return document.getElementById(id); }
@@ -13,66 +13,16 @@ function $(id) { return document.getElementById(id); }
    Constants
 ========================= */
 const PET_ITEM_LIST = [
-  "All Skills Exp Boost",
-  "All Skills Exp Super-Boost",
-  "Antique Remedies",
-  "Bejeweled Collar",
-  "Big Teeth",
-  "Bigger Teeth",
-  "Bingo Booster",
-  "Brown Bandana",
-  "Bubblegum",
-  "Burnt Texts",
-  "Combat Exp Boost",
-  "Cretan Urn",
-  "Crochet Tiger Plushie",
-  "Dead Cat Food",
-  "Dwarf Turtle Shelmet",
-  "Edible Seaweed",
-  "Eerie Toy",
-  "Eerie Treat",
-  "Exp Share",
-  "Exp Share Core",
-  "Fake Neuroscience Degree",
-  "Farming Exp Boost",
-  "Fishing Exp Boost",
-  "Flying Pig",
-  "Foraging Exp Boost",
-  "Four-Eyed Fish",
-  "Frog Treat",
-  "Gold Claws",
-  "Grandma's Knitting Needle",
-  "Green Bandana",
-  "Guardian Lucky Claw",
-  "Hardened Scales",
-  "Hephaestus Plushie",
-  "Hephaestus Relic",
-  "Hephaestus Remedies",
-  "Hephaestus Shelmet",
-  "Hephaestus Souvenir",
-  "Hephaestus Urn",
-  "Iron Claws",
-  "Jerry 3D Glasses",
-  "Lucky Clover",
-  "Mining Exp Boost",
-  "Minos Relic",
-  "Party Hat",
-  "Quick Claw",
-  "Radioactive Vial",
-  "Reaper Gem",
-  "Reinforced Scales",
-  "Saddle",
-  "Serrated Claws",
-  "Sharpened Claws",
-  "Simple Carrot Candy",
-  "Spooky Cupcake",
-  "Textbook",
-  "Tier Boost",
-  "Tier Boost Core",
-  "Titanium Minecart",
-  "Vampire Fang",
-  "Washed-up Souvenir",
-  "Yellow Bandana",
+  "All Skills Exp Boost","All Skills Exp Super-Boost","Antique Remedies","Bejeweled Collar","Big Teeth","Bigger Teeth",
+  "Bingo Booster","Brown Bandana","Bubblegum","Burnt Texts","Combat Exp Boost","Cretan Urn","Crochet Tiger Plushie",
+  "Dead Cat Food","Dwarf Turtle Shelmet","Edible Seaweed","Eerie Toy","Eerie Treat","Exp Share","Exp Share Core",
+  "Fake Neuroscience Degree","Farming Exp Boost","Fishing Exp Boost","Flying Pig","Foraging Exp Boost","Four-Eyed Fish",
+  "Frog Treat","Gold Claws","Grandma's Knitting Needle","Green Bandana","Guardian Lucky Claw","Hardened Scales",
+  "Hephaestus Plushie","Hephaestus Relic","Hephaestus Remedies","Hephaestus Shelmet","Hephaestus Souvenir",
+  "Hephaestus Urn","Iron Claws","Jerry 3D Glasses","Lucky Clover","Mining Exp Boost","Minos Relic","Party Hat",
+  "Quick Claw","Radioactive Vial","Reaper Gem","Reinforced Scales","Saddle","Serrated Claws","Sharpened Claws",
+  "Simple Carrot Candy","Spooky Cupcake","Textbook","Tier Boost","Tier Boost Core","Titanium Minecart","Vampire Fang",
+  "Washed-up Souvenir","Yellow Bandana",
 ];
 
 /* =========================
@@ -89,12 +39,10 @@ function parseCoins(input) {
   if (suffix && multipliers[suffix]) value *= multipliers[suffix];
   return Math.round(value);
 }
-
 function formatCoins(n) {
   if (!isFinite(n)) return "—";
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(n) + " coins";
 }
-
 function formatShort(n) {
   const x = Number(n);
   if (!isFinite(x)) return "—";
@@ -105,7 +53,6 @@ function formatShort(n) {
   if (abs >= 1e3)  return (x / 1e3).toFixed(2).replace(/\.00$/, "") + "k";
   return String(Math.round(x));
 }
-
 function escapeHtml(s) {
   return String(s ?? "")
     .replace(/&/g, "&amp;")
@@ -114,7 +61,6 @@ function escapeHtml(s) {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 }
-
 function normalizeTextForDedupe(s) {
   return String(s || "")
     .toLowerCase()
@@ -122,12 +68,9 @@ function normalizeTextForDedupe(s) {
     .replace(/\s+/g, " ")
     .trim();
 }
-
 function toKeyFromLabel(label) {
-  // used for local lists; server expects snake-ish keys in some places
   return String(label || "").trim().toLowerCase().replace(/\s+/g, "_");
 }
-
 function prettyFromKey(k) {
   const x = String(k || "").trim();
   if (!x || x === "none" || x === "null") return "None";
@@ -146,7 +89,6 @@ function isWitherBladeKey(itemKeyOrLabel) {
   const k = String(itemKeyOrLabel || "").trim().toLowerCase();
   return k === "hyperion" || k === "scylla" || k === "valkyrie" || k === "astraea";
 }
-
 function updateWIVisibility() {
   const itemEl = $("advItem");
   const wiEl = $("advWI");
@@ -163,9 +105,11 @@ function updateWIVisibility() {
 }
 
 /* =========================
-   Stars rendering
-   - ALWAYS show 5 icons when starred
-   - show master-star number if >0
+   Stars rendering (COFLNET STYLE)
+   Intent:
+   - If item has ANY stars (stars10 >= 1), show "✪✪✪✪✪"
+   - If stars10 > 5, append master star digit as dingbat: ➊➋➌➍➎
+   - Prefer stars10; fallback to dstars+mstars
 ========================= */
 function clampInt(n, lo, hi) {
   const x = Math.trunc(Number(n) || 0);
@@ -173,14 +117,29 @@ function clampInt(n, lo, hi) {
   return Math.max(lo, Math.min(hi, x));
 }
 
-function renderStarsHtml(dungeonStars, masterStars) {
-  const ds = clampInt(dungeonStars, 0, 5);
-  const ms = clampInt(masterStars, 0, 5);
-  if (ds <= 0 && ms <= 0) return "";
+const MS_DINGBAT = { 1: "➊", 2: "➋", 3: "➌", 4: "➍", 5: "➎" };
+
+function computeStars10({ stars10, dstars, mstars }) {
+  const s10 = clampInt(stars10, 0, 10);
+  if (s10 > 0) return s10;
+  const ds = clampInt(dstars, 0, 5);
+  const ms = clampInt(mstars, 0, 5);
+  return clampInt(ds + ms, 0, 10);
+}
+
+function renderStarsHtmlFromObj(obj) {
+  const s10 = computeStars10(obj || {});
+  if (s10 <= 0) return "";
 
   const icons = "✪".repeat(5);
-  const num = ms > 0 ? `<span class="mstar-num">${ms}</span>` : "";
-  return `<span class="sb-stars">${escapeHtml(icons)}</span>${num ? " " + num : ""}`;
+  const master = s10 > 5 ? clampInt(s10 - 5, 1, 5) : 0;
+  const digit = master ? (MS_DINGBAT[master] || String(master)) : "";
+
+  return `
+    <span class="sb-stars" aria-label="${s10} stars">
+      ${escapeHtml(icons)}${digit ? `<span class="mstar-d">${escapeHtml(digit)}</span>` : ""}
+    </span>
+  `.trim();
 }
 
 /* =========================
@@ -191,12 +150,10 @@ function normalizeTier(t) {
   if (["AAA", "AA", "A", "B", "BB", "PARTIAL"].includes(u)) return u;
   return "MISC-A";
 }
-
 function tierLabel(tier) {
   const t = normalizeTier(tier);
   return t === "PARTIAL" ? "PARTIAL" : t;
 }
-
 function parseEnchantAny(raw) {
   if (raw == null) return { tier: "MISC-A", label: "—" };
   if (typeof raw === "object") {
@@ -208,12 +165,10 @@ function parseEnchantAny(raw) {
   if (!s) return { tier: "MISC-A", label: "—" };
   return { tier: "MISC-A", label: s };
 }
-
 function enchantTagHtml(tier) {
   const t = normalizeTier(tier);
   return `<span class="ench-tag" data-tier="${escapeHtml(t)}">${escapeHtml(tierLabel(t))}</span>`;
 }
-
 function enchantLineHtml(raw) {
   const { tier, label } = parseEnchantAny(raw);
   return `
@@ -223,7 +178,6 @@ function enchantLineHtml(raw) {
     </div>
   `.trim();
 }
-
 function enchantInlineHtml(raw) {
   const { tier, label } = parseEnchantAny(raw);
   return `${enchantTagHtml(tier)} <span class="ench-text">${escapeHtml(label)}</span>`;
@@ -260,13 +214,11 @@ async function copyTextToClipboard(text) {
     return false;
   }
 }
-
 function uuidButtonHtml(uuid) {
   const u = String(uuid || "").trim();
   if (!u) return "";
   return `<button type="button" class="uuid-copy-btn" data-uuid="${escapeHtml(u)}" title="Copy UUID">UUID</button>`;
 }
-
 function setUuidBtnState(btn, label, ok) {
   btn.textContent = label;
   btn.classList.toggle("uuid-ok", !!ok);
@@ -314,12 +266,10 @@ function calculateTaxAndProfit(sellPrice) {
   const finalProfit = afterTax - collectionFee;
   return { taxRate, auctionTax, afterTax, collectionFee, finalProfit };
 }
-
 function calculateProfit(purchasePrice, sellPrice) {
   const { finalProfit } = calculateTaxAndProfit(sellPrice);
   return finalProfit - purchasePrice;
 }
-
 function calculateBreakEven(purchasePrice) {
   let low = purchasePrice;
   let high = purchasePrice * 2;
@@ -334,7 +284,6 @@ function calculateBreakEven(purchasePrice) {
   }
   return mid;
 }
-
 function runCalculator() {
   const sellEl = $("sellPrice");
   const outTax = $("taxResult");
@@ -351,7 +300,6 @@ function runCalculator() {
   outTax.innerText = `Auction Tax (${(taxRate * 100).toFixed(2)}%): ${formatCoins(auctionTax)}`;
   outProfit.innerText = `Take-home (after 1% collection fee): ${formatCoins(finalProfit)}`;
 }
-
 function runLowballCalculator() {
   const purchaseEl = $("purchasePrice");
   const sellEl = $("sellPriceLow");
@@ -625,19 +573,10 @@ function setupEnchantAutocomplete() {
 }
 
 /* =========================
-   Recommend API call (NO liveSignature)
+   Recommend API call
 ========================= */
 async function fetchRecommended({
-  item,
-  stars10,
-  enchants,
-  wi,
-  rarity,
-  dye,
-  skin,
-  petlvl,
-  petskin,
-  petitem,
+  item, stars10, enchants, wi, rarity, dye, skin, petlvl, petskin, petitem,
 }) {
   const params = new URLSearchParams();
   params.set("item", item);
@@ -678,9 +617,12 @@ function renderTop3Rail(top3) {
   rail.innerHTML = top3.slice(0, 3).map((m, idx) => {
     const name = escapeHtml(m.item_name ?? "—");
 
-    const ds = Number(m.dstars ?? m.dungeonStars ?? 0);
-    const ms = Number(m.mstars ?? m.masterStars ?? 0);
-    const starsHtml = renderStarsHtml(ds, ms);
+    // ✅ stars10-first, fallback to dstars+mstars
+    const starsHtml = renderStarsHtmlFromObj({
+      stars10: m.stars10,
+      dstars: m.dstars ?? m.dungeonStars,
+      mstars: m.mstars ?? m.masterStars,
+    });
 
     const price = formatCoins(Number(m.final_price));
     const score = escapeHtml(String(Math.round(m.score ?? 0)));
@@ -897,7 +839,6 @@ document.addEventListener("DOMContentLoaded", () => {
   setupAutocomplete({ inputId: "advSkin", boxId: "skinSuggest", endpoint: "/api/skins", limit: 30 });
   setupAutocomplete({ inputId: "advPetSkin", boxId: "petSkinSuggest", endpoint: "/api/petskins", limit: 30 });
 
-  // ✅ Pet Item local autocomplete (requires: advPetItem + petItemSuggest in HTML)
   setupLocalAutocomplete({
     inputId: "advPetItem",
     boxId: "petItemSuggest",
