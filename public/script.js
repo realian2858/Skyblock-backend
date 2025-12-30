@@ -1,4 +1,4 @@
-// public/script.js (v6 - nav + dropdown safety + WI refresh on view changes)
+// public/script.js (v7 - FULL FIX: 10★ parsing + clean names + safe dropdowns + WI refresh)
 
 function $(id) { return document.getElementById(id); }
 
@@ -36,30 +36,6 @@ function formatCoins(n) {
   if (!isFinite(n)) return "—";
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(n) + " coins";
 }
-// Stars glyphs seen in SB names / copies
-const STAR_GLYPHS_RE = /[✪✦★☆✯✰✫✬✭✮]/g;        // star symbols
-const MASTER_DINGBAT_RE = /[➊➋➌➍➎]/g;          // master star digits
-const TRAILING_STARS_RE = /\s*[✪✦★☆✯✰✫✬✭✮]+\s*[➊➋➌➍➎]?\s*$/; // end-of-name pattern
-
-const DINGBAT_TO_NUM = { "➊":1, "➋":2, "➌":3, "➍":4, "➎":5 };
-
-function stripStarsFromName(name) {
-  // removes trailing stars + master digit
-  return String(name || "").replace(TRAILING_STARS_RE, "").trim();
-}
-
-function parseStarsFromName(name) {
-  const s = String(name || "");
-  const stars = (s.match(STAR_GLYPHS_RE) || []).length;
-  const ding = (s.match(MASTER_DINGBAT_RE) || [])[0];
-  const master = ding ? (DINGBAT_TO_NUM[ding] || 0) : 0;
-
-  // coflnet style: 5 stars always shown + master digit for 6–10
-  if (stars >= 5 && master > 0) return 5 + master; // 6..10
-  if (stars > 0) return Math.min(stars, 10);        // 1..5 (or capped)
-  return 0;
-}
-
 function formatShort(n) {
   const x = Number(n);
   if (!isFinite(x)) return "—";
@@ -100,6 +76,41 @@ function prettyFromKey(k) {
 }
 
 /* =========================
+   Stars / Name sanitizing (FIXED FOR CIRCLES + 10★)
+   - COFLNET style: 5 icons + master dingbat for 6–10
+   - Your server output uses circles ○● sometimes. We support both.
+========================= */
+const STAR_ICON_RE = /[✪✦★☆✯✰✫✬✭✮]/g;           // star icons
+const CIRCLE_ICON_RE = /[●○◉◎◍]/g;                // circle icons used by some outputs
+const MASTER_DINGBAT_RE = /[➊➋➌➍➎]/g;
+
+const DINGBAT_TO_NUM = { "➊":1, "➋":2, "➌":3, "➍":4, "➎":5 };
+
+// Remove any trailing icons (stars OR circles) + optional dingbat digit.
+const TRAILING_STARS_RE = /\s*[✪✦★☆✯✰✫✬✭✮●○◉◎◍]+\s*[➊➋➌➍➎]?\s*$/;
+
+function stripStarsFromName(name) {
+  return String(name || "").replace(TRAILING_STARS_RE, "").trim();
+}
+
+function parseStarsFromName(name) {
+  const s = String(name || "");
+
+  // Count either stars or circles (whichever the string uses)
+  const starCount = (s.match(STAR_ICON_RE) || []).length;
+  const circleCount = (s.match(CIRCLE_ICON_RE) || []).length;
+  const shown = Math.max(starCount, circleCount);
+
+  // Master digit (➊..➎) indicates 6..10 when there are 5 shown icons
+  const ding = (s.match(MASTER_DINGBAT_RE) || [])[0];
+  const master = ding ? (DINGBAT_TO_NUM[ding] || 0) : 0;
+
+  if (shown >= 5 && master > 0) return Math.min(10, 5 + master); // 6..10
+  if (shown > 0) return Math.min(10, shown);                     // 1..5
+  return 0;
+}
+
+/* =========================
    Wither Impact visibility (robust)
 ========================= */
 function normItemKey(s) {
@@ -110,13 +121,8 @@ function normItemKey(s) {
     .trim();
 }
 function isWitherBlade(itemKeyOrLabel) {
-  const k = normItemKey(itemKeyOrLabel);
-  return (
-    k.includes("hyperion") ||
-    k.includes("scylla") ||
-    k.includes("valkyrie") ||
-    k.includes("astraea")
-  );
+  const k = normItemKey(stripStarsFromName(itemKeyOrLabel));
+  return k.includes("hyperion") || k.includes("scylla") || k.includes("valkyrie") || k.includes("astraea");
 }
 function updateWIVisibility() {
   const itemEl = $("advItem");
@@ -140,15 +146,21 @@ function clampInt(n, lo, hi) {
   return Math.max(lo, Math.min(hi, x));
 }
 const MS_DINGBAT = { 1: "➊", 2: "➋", 3: "➌", 4: "➍", 5: "➎" };
+
 function computeStars10({ stars10, dstars, mstars }) {
   const s10 = clampInt(stars10, 0, 10);
   if (s10 > 0) return s10;
+
   const ds = clampInt(dstars, 0, 5);
   const ms = clampInt(mstars, 0, 5);
-  return clampInt(ds + ms, 0, 10);
+  const sum = clampInt(ds + ms, 0, 10);
+  if (sum > 0) return sum;
+
+  return 0;
 }
-function renderStarsHtmlFromObj(obj) {
-  const s10 = computeStars10(obj || {});
+
+function renderStarsHtml10(stars10) {
+  const s10 = clampInt(stars10, 0, 10);
   if (s10 <= 0) return "";
 
   const icons = "✪".repeat(5);
@@ -160,6 +172,11 @@ function renderStarsHtmlFromObj(obj) {
       ${escapeHtml(icons)}${digit ? `<span class="mstar-d">${escapeHtml(digit)}</span>` : ""}
     </span>
   `.trim();
+}
+
+function renderStarsHtmlFromObj(obj) {
+  const s10 = computeStars10(obj || {});
+  return renderStarsHtml10(s10);
 }
 
 /* =========================
@@ -270,7 +287,6 @@ function setView(view) {
 
   if (activeLabel) activeLabel.textContent = isBasics ? "Basics" : "Advanced";
 
-  // ✅ ensure WI visibility is always correct when entering Advanced
   if (!isBasics) updateWIVisibility();
 }
 
@@ -367,14 +383,13 @@ function setupStars10Slider() {
 }
 
 /* =========================
-   Server-backed autocomplete (hardened)
+   Server-backed autocomplete (hardened + CLEAN PICK)
 ========================= */
 function setupAutocomplete({ inputId, boxId, endpoint, limit = 30, onPick }) {
   const input = $(inputId);
   const box = $(boxId);
   if (!input || !box) return;
 
-  // match your v12 CSS intention
   box.style.zIndex = "5000";
 
   let timer = null;
@@ -398,7 +413,8 @@ function setupAutocomplete({ inputId, boxId, endpoint, limit = 30, onPick }) {
       const key = String(toKey(it) || "").trim();
       if (!label && !key) continue;
 
-      const dedupeKey = key ? key.toLowerCase() : normalizeTextForDedupe(label);
+      // dedupe on CLEANED key/label so star variants don't become duplicates
+      const dedupeKey = (stripStarsFromName(key || label)).toLowerCase() || normalizeTextForDedupe(label);
       if (!dedupeKey) continue;
 
       if (seen.has(dedupeKey)) continue;
@@ -414,17 +430,15 @@ function setupAutocomplete({ inputId, boxId, endpoint, limit = 30, onPick }) {
     for (const it of cleaned) {
       const div = document.createElement("div");
       div.className = "item";
-      div.dataset.label = toLabel(it);
-      div.dataset.key = toKey(it);
-      div.textContent = toLabel(it);
+      div.dataset.label = String(toLabel(it) || "");
+      div.dataset.key = String(toKey(it) || "");
+      div.textContent = stripStarsFromName(toLabel(it));
       box.appendChild(div);
     }
   }
 
   input.addEventListener("keydown", (e) => {
-    // typing resets the chosen "key"
     if (e.key.length === 1 || e.key === "Backspace" || e.key === "Delete") input.dataset.key = "";
-    // ESC closes suggestions
     if (e.key === "Escape") hide();
   });
 
@@ -456,8 +470,13 @@ function setupAutocomplete({ inputId, boxId, endpoint, limit = 30, onPick }) {
     const el = e.target.closest(".item");
     if (!el) return;
     e.preventDefault();
-    input.value = stripStarsFromName(el.dataset.label || "");
-input.dataset.key = stripStarsFromName(el.dataset.key || "");
+
+    const labelClean = stripStarsFromName(el.dataset.label || "");
+    const keyClean   = stripStarsFromName(el.dataset.key || el.dataset.label || "");
+
+    input.value = labelClean;
+    input.dataset.key = keyClean;
+
     hide();
     input.focus();
     onPick?.(input.dataset.key || input.value || "");
@@ -651,14 +670,18 @@ function renderTop3Rail(top3) {
   }
 
   rail.innerHTML = top3.slice(0, 3).map((m, idx) => {
-    const name = escapeHtml(m.item_name ?? "—");
-    const derivedStars10 = parseStarsFromName(m.item_name || "");
-const starsHtml = renderStarsHtmlFromObj({
-  stars10: m.stars10 ?? derivedStars10,
-  dstars: m.dstars ?? m.dungeonStars,
-  mstars: m.mstars ?? m.masterStars,
-});
+    // ✅ CLEAN name for display (removes circles/stars/dingbat)
+    const rawName = String(m.item_name ?? "—");
+    const cleanName = stripStarsFromName(rawName);
 
+    // ✅ derive stars if API didn't give stars10/dstars/mstars
+    const derivedStars10 = parseStarsFromName(rawName);
+
+    const starsHtml = renderStarsHtmlFromObj({
+      stars10: m.stars10 ?? derivedStars10,
+      dstars: m.dstars ?? m.dungeonStars,
+      mstars: m.mstars ?? m.masterStars,
+    });
 
     const price = formatCoins(Number(m.final_price));
     const score = escapeHtml(String(Math.round(m.score ?? 0)));
@@ -703,7 +726,7 @@ const starsHtml = renderStarsHtmlFromObj({
       <div class="mini-card">
         <div class="mini-head">
           <div class="mini-title">
-            <div class="mini-name">${idx + 1}) ${name} ${starsHtml}</div>
+            <div class="mini-name">${idx + 1}) ${escapeHtml(cleanName)} ${starsHtml}</div>
             <div class="mini-tags">
               <span class="chip">Dye: <b>${escapeHtml(dye)}</b></span>
               <span class="chip">Skin: <b>${escapeHtml(skin)}</b></span>
@@ -785,20 +808,21 @@ async function runAdvancedMode() {
 
   if (!out || !btn || !itemEl || !starsEl || !enchEl) return;
 
-  const rawItem = (itemEl.dataset.key || itemEl.value || "").trim();
-const item = itemEl.dataset.key
-  ? rawItem
-  : stripStarsFromName(rawItem); // if user typed/pasted, clean it
+  // ✅ ALWAYS sanitize (even dataset.key can be dirty depending on API)
+  const rawPicked = (itemEl.dataset.key || "").trim();
+  const rawTyped = (itemEl.value || "").trim();
+  const item = stripStarsFromName(rawPicked || rawTyped);
+
   const stars10 = Number(starsEl.value || 0);
   const enchants = (enchEl.value || "").trim();
 
   const rarity = String(rarityEl?.value || "").trim().toLowerCase();
-  const dye = ((dyeEl?.dataset.key || dyeEl?.value) || "").trim();
-  const skin = ((skinEl?.dataset.key || skinEl?.value) || "").trim();
+  const dye = stripStarsFromName(((dyeEl?.dataset.key || dyeEl?.value) || "").trim());
+  const skin = stripStarsFromName(((skinEl?.dataset.key || skinEl?.value) || "").trim());
 
   const petitem = ((petItemEl?.dataset.key || petItemEl?.value) || "").trim();
   const petlvl = petLevelEl?.value ? Number(petLevelEl.value.trim()) : 0;
-  const petskin = ((petSkinEl?.dataset.key || petSkinEl?.value) || "").trim();
+  const petskin = stripStarsFromName(((petSkinEl?.dataset.key || petSkinEl?.value) || "").trim());
 
   const wi = !!wiEl?.checked;
 
@@ -839,12 +863,10 @@ const item = itemEl.dataset.key
    Wire once
 ========================= */
 document.addEventListener("DOMContentLoaded", () => {
-  // Tabs
   document.querySelectorAll(".browse-tabs .tab").forEach((t) => {
     t.addEventListener("click", () => setView(t.dataset.view));
   });
 
-  // Quick Jump buttons
   document.querySelectorAll(".js-nav").forEach((b) => {
     b.addEventListener("click", () => setView(b.dataset.view));
   });
@@ -891,4 +913,3 @@ document.addEventListener("DOMContentLoaded", () => {
 
   renderTop3Rail([]);
 });
-
