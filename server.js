@@ -698,58 +698,61 @@ app.get("/api/recommend", async (req, res) => {
 /* =========================
    /api/items (DEDUPED + match anywhere)
 ========================= */
+// server.js (or routes file)
 app.get("/api/items", async (req, res) => {
   const qRaw = String(req.query.q || "").trim();
-  const qNorm = normKey(qRaw);
-  if (!qNorm) return res.json({ items: [] });
+  const q = qRaw.toLowerCase();
+  const limit = Math.min(60, Math.max(1, Number(req.query.limit || 40)));
 
-  const LIMIT = Math.max(10, Math.min(80, Number(req.query.limit || 40)));
-  const since = Date.now() - 120 * 24 * 60 * 60 * 1000;
+  if (!q) return res.json({ items: [] });
 
-  const tokens = qNorm.split(" ").filter(Boolean).slice(0, 6);
-  if (!tokens.length) return res.json({ items: [] });
-
-  const whereParts = [];
-  const params = [since];
-  let idx = 2;
-
-  for (const t of tokens) {
-    whereParts.push(`(item_key ILIKE $${idx} OR item_name ILIKE $${idx})`);
-    params.push(`%${t}%`);
-    idx++;
-  }
-
-  try {
-    const { rows } = await pool.query(
-      `
-      SELECT item_key, item_name, MAX(ended_ts) AS newest, COUNT(*)::int AS cnt
+  // Search by item_key, not item_name (prevents reforges/junk variants)
+  // Then pick a stable display label for each key.
+  const sql = `
+    WITH keys AS (
+      SELECT item_key
       FROM sales
-      WHERE ended_ts >= $1
-        AND ${whereParts.join(" AND ")}
-      GROUP BY item_key, item_name
-      ORDER BY cnt DESC, newest DESC
-      LIMIT ${LIMIT}
-      `,
-      params
-    );
+      WHERE item_key IS NOT NULL AND item_key <> ''
+        AND item_key ILIKE '%' || $1 || '%'
+      GROUP BY item_key
+      ORDER BY MAX(ended_ts) DESC
+      LIMIT $2
+    )
+    SELECT
+      k.item_key AS key,
+      COALESCE((
+        SELECT
+          -- Clean the label a bit: remove weird star/extra symbols but keep words
+          regexp_replace(s.item_name, '[^[:alnum:][:space:]''-]', '', 'g')
+        FROM sales s
+        WHERE s.item_key = k.item_key
+          AND s.item_name IS NOT NULL AND s.item_name <> ''
+        ORDER BY s.ended_ts DESC
+        LIMIT 1
+      ), k.item_key) AS label
+    FROM keys k;
+  `;
 
-    const seen = new Set();
-    const out = [];
-    for (const r of rows) {
-      const raw = String(r.item_key || r.item_name || "");
-      const cKey = canonicalItemKey(raw);
-      if (!cKey) continue;
-      if (seen.has(cKey)) continue;
-      seen.add(cKey);
-      out.push({ key: cKey, label: canonicalItemDisplay(cKey) });
-      if (out.length >= LIMIT) break;
-    }
+  const { rows } = await pool.query(sql, [q, limit]);
 
-    return res.json({ items: out });
-  } catch (e) {
-    return res.status(500).json({ error: e.message });
-  }
+  // Optional: final cleanup in JS (removes reforges if they sneak into label)
+  const cleanLabel = (label, key) => {
+    let s = String(label || "").trim();
+    if (!s) return key;
+    // remove leading known reforges/prefixes (expand if you want)
+    s = s.replace(/^(Shiny|Heroic|Suspicious|Fabled|Dirty|Withered|Spicy|Sharp)\s+/i, "");
+    // if we stripped too hard and emptied it, fall back to key
+    return s || key;
+  };
+
+  res.json({
+    items: rows.map(r => ({
+      key: r.key,
+      label: cleanLabel(r.label, r.key),
+    })),
+  });
 });
+
 
 /* =========================
    Enchant autocomplete (same)
@@ -834,4 +837,5 @@ app.listen(PORT, "0.0.0.0", async () => {
     catch (e) { console.error("Sync error:", e?.message || e); }
   }, 60_000);
 });
+
 
