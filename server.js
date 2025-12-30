@@ -1,11 +1,11 @@
-// server.js (v12 - NO DUPES AUTOCOMPLETE + ACCURATE LBIN + Cloud Run safe)
+// server.js (v14 - HARD CLEAN AUTOCOMPLETE + ACCURATE LBIN + Cloud Run safe)
 //
-// ✅ /api/items returns UNIQUE item_key AND UNIQUE label (no 5x Hyperion)
-// ✅ label is cleaned (no reforges / shiny / star glyph spam / weird symbols)
-// ✅ search matches both item_key and item_name
-// ✅ LBIN: cheapest PERFECT else PARTIAL
-// ✅ LBIN uses tight "alive" window (3 minutes) based on your 2-min ingest
-// ✅ No background sync loop (ingest job refreshes DB)
+// ✅ /api/items returns UNIQUE item_key AND UNIQUE "base label" (kills Terminator ②③④ etc)
+// ✅ Unicode normalized (② -> 2), then cleaned
+// ✅ Aggressive front-strip of reforges + symbol junk
+// ✅ Search matches both item_key and item_name
+// ✅ LBIN: cheapest PERFECT else PARTIAL (tight alive window)
+// ✅ No background loops
 
 import path from "path";
 import { fileURLToPath } from "url";
@@ -40,11 +40,8 @@ const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const ITEMS_LIMIT_DEFAULT = 40;
 const ITEMS_LIMIT_MAX = 60;
 
-// If ingest runs every 2 minutes, "alive" should be small.
-// 3 minutes is safe and prevents stale auctions from being treated as live.
+// ingest every 2 min -> alive window small
 const LIVE_ALIVE_MS = 3 * 60 * 1000;
-
-// LBIN query cap
 const LIVE_SCAN_LIMIT = 4000;
 
 /* =========================
@@ -57,7 +54,14 @@ function stripStarGlyphs(s) {
     .trim();
 }
 
-// common reforges/prefixes (expand anytime)
+// Normalize unicode (② -> 2, weird dash -> -)
+function unicodeNormalize(s) {
+  return String(s || "")
+    .normalize("NFKD") // decomposes circled digits etc
+    .replace(/[’‘]/g, "'")
+    .replace(/[–—]/g, "-");
+}
+
 const REFORGE_PREFIXES = [
   "Shiny",
   "Heroic",
@@ -118,27 +122,64 @@ const REFORGE_RE = new RegExp(
   "i"
 );
 
-// Remove weird symbols but keep letters/numbers/spaces/'/-
+// Keep letters/numbers/spaces/'/-
 function stripNonWordButKeepNice(s) {
-  return String(s || "")
+  const x = unicodeNormalize(s);
+  return x
     .replace(/[✪★☆✯✰●]+/g, "")
-    .replace(/[^\p{L}\p{N}\s'’-]/gu, " ")
+    .replace(/[^\p{L}\p{N}\s'\-]/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-// Aggressive front-stripping of reforges/prefixes
-function cleanAutocompleteLabel(name, fallbackKey) {
+function cleanDisplayName(name) {
   let s = stripNonWordButKeepNice(name);
 
   // repeatedly strip leading reforges (handles stacked prefixes)
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 6; i++) {
     const next = s.replace(REFORGE_RE, "").trim();
     if (next === s) break;
     s = next;
   }
 
-  return s || String(fallbackKey || "").trim() || "unknown";
+  return s;
+}
+
+// "hyperion" -> "Hyperion", "dark_claymore" -> "Dark Claymore"
+function labelFromKey(itemKey) {
+  const k = String(itemKey || "").trim();
+  if (!k) return "";
+  const spaced = k.replace(/_/g, " ");
+  const titled = spaced.replace(/\w\S*/g, (w) => w[0].toUpperCase() + w.slice(1));
+  return cleanDisplayName(titled) || titled;
+}
+
+// normalized label for dedupe
+function normLabel(label) {
+  // normKey lowercases and strips lots of stuff; we also normalize unicode first
+  return normKey(stripNonWordButKeepNice(label))
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// IMPORTANT: kill junk numbered variants like "Terminator 2", "Terminator ③"
+// but DO NOT kill real numbers like "100" etc.
+// rule: strip trailing number only if 1..10 (single/two-digit <= 10)
+function baseLabelForDedupe(label) {
+  const n = normLabel(label);
+  if (!n) return "";
+
+  const m = n.match(/^(.*)\s+(\d{1,2})$/);
+  if (!m) return n;
+
+  const base = (m[1] || "").trim();
+  const num = Number(m[2]);
+  if (!base) return n;
+
+  // only treat tiny suffix numbers as "junk variant"
+  if (Number.isFinite(num) && num >= 1 && num <= 10) return base;
+
+  return n;
 }
 
 /* =========================
@@ -251,7 +292,6 @@ function normUserKey(raw) {
   if (k === "none" || k === "any") return "";
   return k;
 }
-
 function parseUserPetLevel(raw) {
   const v = String(raw ?? "").trim();
   if (!v) return 0;
@@ -260,14 +300,12 @@ function parseUserPetLevel(raw) {
   const level = Math.trunc(n);
   return level >= 1 && level <= 200 ? level : 0;
 }
-
 function listToOptions(labels) {
   return labels.map((l) => ({
     label: l,
     key: normKey(l.replace(/_/g, " ")).replace(/\s+/g, "_"),
   }));
 }
-
 function normalizeFromOptions(raw, options) {
   const k = normUserKey(raw);
   if (!k) return "";
@@ -410,11 +448,9 @@ function applyVerifiedFiltersOrNull(sig, filters) {
   if (userSkin && userSkin !== "none" && sigSkin(sig) !== userSkin) return { ok: false, unverifiable: false };
   if (userPetSkin && userPetSkin !== "none" && sigPetSkin(sig) !== userPetSkin) return { ok: false, unverifiable: false };
   if (userPetLevel > 0 && sigPetLevel(sig) < userPetLevel) return { ok: false, unverifiable: false };
-
   if (userPetItem && userPetItem !== "none" && sigPetItem(sig) !== userPetItem) {
     return { ok: false, unverifiable: false };
   }
-
   return { ok: true, unverifiable: false };
 }
 
@@ -423,7 +459,6 @@ function applyVerifiedFiltersOrNull(sig, filters) {
 ========================= */
 function strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters }) {
   if (!sig) return "NONE";
-
   const vf = applyVerifiedFiltersOrNull(sig, filters);
   if (!vf.ok) return "NONE";
 
@@ -486,18 +521,13 @@ function scorePartial({ userEnchantsMap, inputStars10, sig, filters }) {
   const vf = applyVerifiedFiltersOrNull(sig, filters);
   if (!vf.ok) return null;
 
-  // unverifiable sig = weak score
   if (vf.unverifiable) score -= 2;
   else score += 2;
 
   if (Number(inputStars10) > 0) {
-    if (!sig) {
-      score -= 1;
-    } else {
-      const st = starsScore(inputStars10, sigStars10(sig));
-      score += st.add;
-      if (st.label) matched.push({ enchant: { tier: st.tier, label: st.label }, add: st.add });
-    }
+    const st = starsScore(inputStars10, sigStars10(sig));
+    score += st.add;
+    if (st.label) matched.push({ enchant: { tier: st.tier, label: st.label }, add: st.add });
   }
 
   const saleEnchants = sig ? sigEnchantMap(sig) : new Map();
@@ -505,11 +535,6 @@ function scorePartial({ userEnchantsMap, inputStars10, sig, filters }) {
   for (const [nameKey, inputLvlRaw] of userEnchantsMap.entries()) {
     const inL = Number(inputLvlRaw);
     if (!Number.isFinite(inL) || inL <= 0) continue;
-
-    if (!sig) {
-      score -= 0.4;
-      continue;
-    }
 
     const saleLvl = Number(saleEnchants.get(nameKey) || 0);
     if (!saleLvl) continue;
@@ -529,9 +554,6 @@ function scorePartial({ userEnchantsMap, inputStars10, sig, filters }) {
     } else if (diff === 1) {
       tierLabel = "PARTIAL";
       add = 1.0;
-    } else {
-      tierLabel = "MISC";
-      add = 0;
     }
 
     add *= 1 + Math.min(10, Math.max(0, inL - 1)) * 0.08;
@@ -545,119 +567,64 @@ function scorePartial({ userEnchantsMap, inputStars10, sig, filters }) {
 }
 
 /* =========================
-   ✅ /api/items (NO DUPES by key OR label)
+   ✅ /api/items (FIXED: no dirty duplicates)
+   - Search: key OR name
+   - Output label: derived from item_key (stable)
+   - Deduping: by baseLabelForDedupe (kills "Terminator 2/③/④")
 ========================= */
 app.get("/api/items", async (req, res) => {
   try {
     const qRaw = String(req.query.q || "").trim();
-    const q = qRaw.toLowerCase();
     const limit = Math.min(ITEMS_LIMIT_MAX, Math.max(1, Number(req.query.limit || ITEMS_LIMIT_DEFAULT)));
+    if (!qRaw) return res.json({ items: [] });
 
-    if (!q) return res.json({ items: [] });
-
-    // Strategy:
-    // 1) Get recent candidate rows from sales + auctions (matching key OR name)
-    // 2) Build per-item_key label candidates
-    // 3) Pick a "best" label for that key using scoring
-    // 4) Dedupe final output by BOTH key and cleaned label
+    const q = qRaw.toLowerCase();
 
     const { rows } = await pool.query(
       `
-      WITH candidates AS (
-        SELECT item_key, item_name, ended_ts AS ts
+      WITH c AS (
+        SELECT item_key, MAX(ended_ts) AS ts
         FROM sales
         WHERE item_key IS NOT NULL AND item_key <> ''
-          AND item_name IS NOT NULL AND item_name <> ''
           AND (item_key ILIKE '%' || $1 || '%' OR item_name ILIKE '%' || $1 || '%')
+        GROUP BY item_key
+
         UNION ALL
-        SELECT item_key, item_name, last_seen_ts AS ts
+
+        SELECT item_key, MAX(last_seen_ts) AS ts
         FROM auctions
         WHERE item_key IS NOT NULL AND item_key <> ''
-          AND item_name IS NOT NULL AND item_name <> ''
           AND (item_key ILIKE '%' || $1 || '%' OR item_name ILIKE '%' || $1 || '%')
+        GROUP BY item_key
       )
-      SELECT item_key, item_name, ts
-      FROM candidates
-      ORDER BY ts DESC
-      LIMIT 2000
+      SELECT item_key, MAX(ts) AS ts
+      FROM c
+      GROUP BY item_key
+      ORDER BY MAX(ts) DESC
+      LIMIT 600
       `,
       [q]
     );
 
-    // Collect candidates per key (limit per key)
-    const perKey = new Map(); // key -> [{raw, cleaned, ts}]
+    const out = [];
+    const seenKey = new Set();
+    const seenBaseLabel = new Set();
+
     for (const r of rows) {
       const key = String(r.item_key || "").trim();
       if (!key) continue;
-
-      const raw = String(r.item_name || "").trim();
-      if (!raw) continue;
-
-      const cleaned = cleanAutocompleteLabel(raw, key);
-      const ts = Number(r.ts || 0);
-
-      if (!perKey.has(key)) perKey.set(key, []);
-      const arr = perKey.get(key);
-
-      // cap per key so we don't do tons of work
-      if (arr.length < 40) arr.push({ raw, cleaned, ts });
-    }
-
-    // Choose the best label for a key:
-    // Prefer:
-    // - cleaned label that equals the canonical form of key (if it matches)
-    // - then most frequent cleaned label
-    // - tie-break: most recent timestamp
-    function pickBestLabel(key, list) {
-      if (!list || !list.length) return key;
-
-      const canonical = cleanAutocompleteLabel(key.replace(/_/g, " "), key).toLowerCase();
-
-      // frequency map
-      const freq = new Map();
-      for (const it of list) {
-        const k = it.cleaned.toLowerCase();
-        freq.set(k, (freq.get(k) || 0) + 1);
-      }
-
-      let best = null;
-
-      for (const it of list) {
-        const cl = it.cleaned.toLowerCase();
-        const score =
-          (cl === canonical ? 1000 : 0) +
-          (freq.get(cl) || 0) * 10 +
-          Math.min(999, Math.floor(it.ts / 1_000_000_000)); // weak recency component
-
-        if (!best || score > best.score) best = { label: it.cleaned, score };
-      }
-
-      return best?.label || key;
-    }
-
-    const items = [];
-    for (const [key, list] of perKey.entries()) {
-      const label = pickBestLabel(key, list);
-      items.push({ key, label });
-    }
-
-    // Dedupe final output by BOTH key and label (prevents 5x "Hyperion")
-    const seenKey = new Set();
-    const seenLabel = new Set();
-    const out = [];
-
-    for (const it of items) {
-      const key = String(it.key || "").trim();
-      const label = String(it.label || "").trim();
-      if (!key || !label) continue;
-
-      const lnorm = label.toLowerCase();
-
       if (seenKey.has(key)) continue;
-      if (seenLabel.has(lnorm)) continue;
+
+      // Label always from key (not DB name)
+      const label = labelFromKey(key);
+      const base = baseLabelForDedupe(label);
+      if (!base) continue;
+
+      // HARD kill duplicates by base label (Terminator 2/③/④ etc)
+      if (seenBaseLabel.has(base)) continue;
 
       seenKey.add(key);
-      seenLabel.add(lnorm);
+      seenBaseLabel.add(base);
       out.push({ key, label });
 
       if (out.length >= limit) break;
@@ -678,15 +645,8 @@ app.get("/api/recommend", async (req, res) => {
 
     const itemKeyFromClient = String(req.query.item_key || "").trim();
     const itemKey = itemKeyFromClient || canonicalItemKey(String(req.query.item || ""));
-
     if (!itemKey) {
-      return res.json({
-        recommended: null,
-        top3: [],
-        count: 0,
-        note: "Pick an item from suggestions.",
-        live: null,
-      });
+      return res.json({ recommended: null, top3: [], count: 0, note: "Pick an item from suggestions.", live: null });
     }
 
     const inputStars10 = Math.max(0, Math.min(10, Number(req.query.stars10 ?? req.query.stars ?? 0)));
@@ -700,16 +660,7 @@ app.get("/api/recommend", async (req, res) => {
     const userPetItem = normalizeFromOptions(req.query.petitem ?? req.query.petItem, PETITEM_OPTIONS);
 
     const userEnchantsMap = parseEnchantList(req.query.enchants || "");
-
-    const filters = {
-      userWI,
-      userRarity,
-      userDye,
-      userSkin,
-      userPetSkin,
-      userPetLevel,
-      userPetItem,
-    };
+    const filters = { userWI, userRarity, userDye, userSkin, userPetSkin, userPetLevel, userPetItem };
 
     const since = now - 120 * 24 * 60 * 60 * 1000;
 
@@ -760,10 +711,7 @@ app.get("/api/recommend", async (req, res) => {
         score: sc.score,
         matched: sc.matched,
         allEnchants: sig
-          ? Array.from(sc.saleEnchants.entries()).map(([k, v]) => ({
-              tier: tierFor(k, v),
-              label: displayEnchant(k, v),
-            }))
+          ? Array.from(sc.saleEnchants.entries()).map(([k, v]) => ({ tier: tierFor(k, v), label: displayEnchant(k, v) }))
           : [],
         unverifiable: sc.unverifiable,
       });
@@ -777,10 +725,7 @@ app.get("/api/recommend", async (req, res) => {
     const rangeLow = pricePool.length ? Math.min(...pricePool) : null;
     const rangeHigh = pricePool.length ? Math.max(...pricePool) : null;
 
-    /* =========================
-       ✅ LIVE BIN (LBIN)
-       Tight alive window + safe signature usage
-    ========================= */
+    // LBIN
     const { rows: liveRows } = await pool.query(
       `
       SELECT uuid, item_name, item_key, bin, start_ts, end_ts, starting_bid,
@@ -804,10 +749,6 @@ app.get("/api/recommend", async (req, res) => {
       if (!Number.isFinite(price) || price <= 0) continue;
 
       let sig = String(a.signature || "").trim();
-
-      // If no signature, we MAY build it, but:
-      // - PERFECT requires signature (otherwise strictMatchQuality returns NONE)
-      // - PARTIAL scoring can still happen, but will be "unverifiable"
       if (!sig) {
         sig = String(
           (await buildSignature({
@@ -850,10 +791,7 @@ app.get("/api/recommend", async (req, res) => {
     }
 
     const liveBest = bestPerfect || bestPartial || null;
-
-    const note = candidates.length
-      ? null
-      : "No sales found that pass verified filters in the selected history window.";
+    const note = candidates.length ? null : "No sales found that pass verified filters in the selected history window.";
 
     return res.json({
       recommended: med,
