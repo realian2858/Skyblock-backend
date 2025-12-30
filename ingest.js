@@ -1,8 +1,10 @@
-// ingest.js (v5 - Cloud Run Job: RUN ONCE + EXIT)
+// ingest.js (v6 - FIX: refresh wrong stars10 signatures + build sig when item_name contains stars)
+// Cloud Run Job: RUN ONCE + EXIT
 //
 // ✅ Full snapshot each run (all pages)
 // ✅ Bulk upsert auctions
-// ✅ Build signature for BIN + when bytes/lore exists
+// ✅ Build signature when BIN OR bytes/lore exists OR item_name contains coflnet stars
+// ✅ Overwrite signature when stars10 changes (fixes "10★ read as 5★" stuck rows)
 // ✅ Mark not-seen auctions as ended (LBIN correctness)
 // ✅ Finalize ended -> sales in batches
 // ✅ Backfill sales.item_key lightly
@@ -95,6 +97,25 @@ function nonEmptyText(x) {
 }
 
 /* =========================
+   Star presence heuristic (Coflnet-style)
+   If item_name contains ✪/★/● or dingbat/circled digits,
+   we should build a signature even without bytes/lore.
+========================= */
+function itemNameLooksStarred(itemName) {
+  const s = String(itemName ?? "");
+  if (!s) return false;
+
+  // star/circle-star glyphs
+  if (/[✪★☆✯✰●⬤•]/.test(s)) return true;
+
+  // dingbat/circled/superscript digits commonly used for master stars addon
+  if (/[➊➋➌➍➎➏➐➑➒➓⓪①②③④⑤⑥⑦⑧⑨❶❷❸❹❺❻❼❽❾❿⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉]/.test(s))
+    return true;
+
+  return false;
+}
+
+/* =========================
    Signature safe wrapper
 ========================= */
 async function safeBuildSignature({ itemName, lore, tier, itemBytes }) {
@@ -114,6 +135,7 @@ async function safeBuildSignature({ itemName, lore, tier, itemBytes }) {
 
 /* =========================
    Bulk upsert auctions
+   KEY FIX: signature update rule compares stars10 in SQL.
 ========================= */
 async function upsertAuctionsBulk(list, now) {
   if (!Array.isArray(list) || list.length === 0) return 0;
@@ -137,8 +159,11 @@ async function upsertAuctionsBulk(list, now) {
     const lore = nonEmptyText(a.item_lore);
     const bytes = nonEmptyText(a.item_bytes);
 
+    // ✅ build signature if BIN OR bytes/lore exist OR name contains coflnet stars
+    const shouldBuildSig = bin || !!lore || !!bytes || itemNameLooksStarred(itemName);
+
     let sig = null;
-    if (bin || lore || bytes) {
+    if (shouldBuildSig) {
       sig = await safeBuildSignature({
         itemName,
         lore: lore || "",
@@ -195,6 +220,12 @@ async function upsertAuctionsBulk(list, now) {
       );
     }
 
+    // ✅ signature overwrite rules:
+    // - if existing empty -> take new
+    // - if pet_item added -> take new
+    // - if stars10 differs -> take new (THIS FIXES stuck 5-star signatures)
+    //
+    // NOTE: regexp_match returns text[], [1] is the capture group
     const sql = `
       INSERT INTO auctions
         (uuid, item_name, item_key, bin, start_ts, end_ts,
@@ -216,8 +247,25 @@ async function upsertAuctionsBulk(list, now) {
         last_seen_ts = EXCLUDED.last_seen_ts,
         is_ended     = false,
         signature = CASE
+          WHEN EXCLUDED.signature IS NULL OR EXCLUDED.signature = '' THEN auctions.signature
+
           WHEN auctions.signature IS NULL OR auctions.signature = '' THEN EXCLUDED.signature
+
           WHEN auctions.signature NOT LIKE '%pet_item:%' AND EXCLUDED.signature LIKE '%pet_item:%' THEN EXCLUDED.signature
+
+          WHEN (
+            -- compare stars10 if both exist; overwrite if different
+            (regexp_match(auctions.signature, 'stars10:(\\d+)'))[1] IS NOT NULL
+            AND (regexp_match(EXCLUDED.signature, 'stars10:(\\d+)'))[1] IS NOT NULL
+            AND (regexp_match(auctions.signature, 'stars10:(\\d+)'))[1] <> (regexp_match(EXCLUDED.signature, 'stars10:(\\d+)'))[1]
+          ) THEN EXCLUDED.signature
+
+          WHEN (
+            -- if existing has no stars10 but new does, take new
+            (regexp_match(auctions.signature, 'stars10:(\\d+)'))[1] IS NULL
+            AND (regexp_match(EXCLUDED.signature, 'stars10:(\\d+)'))[1] IS NOT NULL
+          ) THEN EXCLUDED.signature
+
           ELSE auctions.signature
         END
     `;
@@ -226,7 +274,9 @@ async function upsertAuctionsBulk(list, now) {
     await client.query("COMMIT");
     return rows.length;
   } catch (e) {
-    try { await client.query("ROLLBACK"); } catch {}
+    try {
+      await client.query("ROLLBACK");
+    } catch {}
     throw e;
   } finally {
     client.release();
@@ -250,6 +300,7 @@ async function markNotSeenInSnapshotAsEnded(now) {
 
 /* =========================
    Finalize ended -> sales
+   KEY FIX: same stars10-refresh signature logic as auctions
 ========================= */
 async function finalizeEnded(now) {
   const { rows } = await pool.query(
@@ -291,8 +342,23 @@ async function finalizeEnded(now) {
         ended_ts    = EXCLUDED.ended_ts,
         tier        = EXCLUDED.tier,
         signature = CASE
+          WHEN EXCLUDED.signature IS NULL OR EXCLUDED.signature = '' THEN sales.signature
+
           WHEN sales.signature IS NULL OR sales.signature = '' THEN EXCLUDED.signature
+
           WHEN sales.signature NOT LIKE '%pet_item:%' AND EXCLUDED.signature LIKE '%pet_item:%' THEN EXCLUDED.signature
+
+          WHEN (
+            (regexp_match(sales.signature, 'stars10:(\\d+)'))[1] IS NOT NULL
+            AND (regexp_match(EXCLUDED.signature, 'stars10:(\\d+)'))[1] IS NOT NULL
+            AND (regexp_match(sales.signature, 'stars10:(\\d+)'))[1] <> (regexp_match(EXCLUDED.signature, 'stars10:(\\d+)'))[1]
+          ) THEN EXCLUDED.signature
+
+          WHEN (
+            (regexp_match(sales.signature, 'stars10:(\\d+)'))[1] IS NULL
+            AND (regexp_match(EXCLUDED.signature, 'stars10:(\\d+)'))[1] IS NOT NULL
+          ) THEN EXCLUDED.signature
+
           ELSE sales.signature
         END
     `;
@@ -305,14 +371,23 @@ async function finalizeEnded(now) {
       const price = Number(r.bin ? r.starting_bid : r.highest_bid) || 0;
       const itemKey = r.item_key || canonicalItemKey(r.item_name || "") || null;
 
+      // ✅ build sig even for starred names (some ended auctions have no lore/bytes stored)
+      const shouldBuildSig =
+        !!r.signature ||
+        !!r.item_lore ||
+        !!r.item_bytes ||
+        itemNameLooksStarred(r.item_name || "");
+
       const sig =
         (r.signature && String(r.signature).trim()) ||
-        (await safeBuildSignature({
-          itemName: r.item_name || "",
-          lore: (r.item_lore || "").toString(),
-          tier: r.tier || "",
-          itemBytes: (r.item_bytes || "").toString(),
-        }));
+        (shouldBuildSig
+          ? await safeBuildSignature({
+              itemName: r.item_name || "",
+              lore: (r.item_lore || "").toString(),
+              tier: r.tier || "",
+              itemBytes: (r.item_bytes || "").toString(),
+            })
+          : null);
 
       await client.query(upsertSaleSql, [
         r.uuid,
@@ -334,7 +409,9 @@ async function finalizeEnded(now) {
     await client.query("COMMIT");
     return moved;
   } catch (e) {
-    try { await client.query("ROLLBACK"); } catch {}
+    try {
+      await client.query("ROLLBACK");
+    } catch {}
     throw e;
   } finally {
     client.release();
@@ -373,7 +450,9 @@ async function backfillSalesItemKeys({ batch = SALES_KEY_BACKFILL_BATCH } = {}) 
     await client.query("COMMIT");
     return updated;
   } catch (e) {
-    try { await client.query("ROLLBACK"); } catch {}
+    try {
+      await client.query("ROLLBACK");
+    } catch {}
     throw e;
   } finally {
     client.release();
@@ -434,11 +513,15 @@ async function main() {
 
 main()
   .then(async () => {
-    try { await pool.end(); } catch {}
+    try {
+      await pool.end();
+    } catch {}
     process.exit(0);
   })
   .catch(async (e) => {
     console.error("❌ INGEST FAILED", e?.stack || e);
-    try { await pool.end(); } catch {}
+    try {
+      await pool.end();
+    } catch {}
     process.exit(1);
   });
