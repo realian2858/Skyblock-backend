@@ -36,6 +36,30 @@ function formatCoins(n) {
   if (!isFinite(n)) return "—";
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(n) + " coins";
 }
+// Stars glyphs seen in SB names / copies
+const STAR_GLYPHS_RE = /[✪✦★☆✯✰✫✬✭✮]/g;        // star symbols
+const MASTER_DINGBAT_RE = /[➊➋➌➍➎]/g;          // master star digits
+const TRAILING_STARS_RE = /\s*[✪✦★☆✯✰✫✬✭✮]+\s*[➊➋➌➍➎]?\s*$/; // end-of-name pattern
+
+const DINGBAT_TO_NUM = { "➊":1, "➋":2, "➌":3, "➍":4, "➎":5 };
+
+function stripStarsFromName(name) {
+  // removes trailing stars + master digit
+  return String(name || "").replace(TRAILING_STARS_RE, "").trim();
+}
+
+function parseStarsFromName(name) {
+  const s = String(name || "");
+  const stars = (s.match(STAR_GLYPHS_RE) || []).length;
+  const ding = (s.match(MASTER_DINGBAT_RE) || [])[0];
+  const master = ding ? (DINGBAT_TO_NUM[ding] || 0) : 0;
+
+  // coflnet style: 5 stars always shown + master digit for 6–10
+  if (stars >= 5 && master > 0) return 5 + master; // 6..10
+  if (stars > 0) return Math.min(stars, 10);        // 1..5 (or capped)
+  return 0;
+}
+
 function formatShort(n) {
   const x = Number(n);
   if (!isFinite(x)) return "—";
@@ -432,8 +456,8 @@ function setupAutocomplete({ inputId, boxId, endpoint, limit = 30, onPick }) {
     const el = e.target.closest(".item");
     if (!el) return;
     e.preventDefault();
-    input.value = el.dataset.label || "";
-    input.dataset.key = el.dataset.key || "";
+    input.value = stripStarsFromName(el.dataset.label || "");
+input.dataset.key = stripStarsFromName(el.dataset.key || "");
     hide();
     input.focus();
     onPick?.(input.dataset.key || input.value || "");
@@ -628,11 +652,13 @@ function renderTop3Rail(top3) {
 
   rail.innerHTML = top3.slice(0, 3).map((m, idx) => {
     const name = escapeHtml(m.item_name ?? "—");
-    const starsHtml = renderStarsHtmlFromObj({
-      stars10: m.stars10,
-      dstars: m.dstars ?? m.dungeonStars,
-      mstars: m.mstars ?? m.masterStars,
-    });
+    const derivedStars10 = parseStarsFromName(m.item_name || "");
+const starsHtml = renderStarsHtmlFromObj({
+  stars10: m.stars10 ?? derivedStars10,
+  dstars: m.dstars ?? m.dungeonStars,
+  mstars: m.mstars ?? m.masterStars,
+});
+
 
     const price = formatCoins(Number(m.final_price));
     const score = escapeHtml(String(Math.round(m.score ?? 0)));
@@ -759,7 +785,10 @@ async function runAdvancedMode() {
 
   if (!out || !btn || !itemEl || !starsEl || !enchEl) return;
 
-  const item = (itemEl.dataset.key || itemEl.value || "").trim();
+  const rawItem = (itemEl.dataset.key || itemEl.value || "").trim();
+const item = itemEl.dataset.key
+  ? rawItem
+  : stripStarsFromName(rawItem); // if user typed/pasted, clean it
   const stars10 = Number(starsEl.value || 0);
   const enchants = (enchEl.value || "").trim();
 
@@ -862,3 +891,4 @@ document.addEventListener("DOMContentLoaded", () => {
 
   renderTop3Rail([]);
 });
+
