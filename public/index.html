@@ -66,6 +66,7 @@
 
       <section class="col-right">
 
+        <!-- BASICS -->
         <section id="view-basics" class="view active" aria-label="Basics View">
           <div class="card">
             <div class="card-head">
@@ -141,6 +142,7 @@
           </div>
         </section>
 
+        <!-- ADVANCED -->
         <section id="view-advanced" class="view" aria-label="Advanced View">
           <div class="card card-hero">
             <div class="card-head">
@@ -191,20 +193,19 @@
                     <div class="hint">Used for strict recommendations.</div>
                   </div>
                 </div>
-                
-                <div class="field">
-<div class="hero-row hero-row-1">
-  <div class="field">
-    <label for="advPetItem">Pet Item (optional)</label>
-    <div class="suggest-wrap">
-      <input id="advPetItem" type="text" placeholder="Start typing a pet item..." autocomplete="off" />
-      <div class="mod-suggest" id="petItemSuggest" style="display:none;"></div>
-    </div>
-  </div>
-</div>
 
+                <!-- ✅ FIXED: Pet Item row (properly closed) -->
+                <div class="hero-row hero-row-1">
+                  <div class="field">
+                    <label for="advPetItem">Pet Item (optional)</label>
+                    <div class="suggest-wrap">
+                      <input id="advPetItem" type="text" placeholder="Start typing a pet item..." autocomplete="off" />
+                      <div class="mod-suggest" id="petItemSuggest" style="display:none;"></div>
+                    </div>
+                  </div>
+                </div>
 
-
+                <!-- WI row -->
                 <div class="hero-row hero-row-1" id="wiRow">
                   <label class="toggle">
                     <input type="checkbox" id="advWI" />
@@ -244,7 +245,7 @@
                     </div>
                   </div>
 
-                  <div class="field field-actions">       
+                  <div class="field field-actions">
                     <button id="advBtn" type="button" class="btn btn-primary btn-wide">Get Recommendation</button>
                   </div>
                 </div>
@@ -255,7 +256,6 @@
                     <div class="result-pre" id="advOut">—</div>
                   </div>
                 </div>
-                
               </section>
 
               <aside class="adv-panel adv-examples" aria-label="Market Echoes">
@@ -279,5 +279,4 @@
 
   <script src="script.js" defer></script>
 </body>
-
 </html>
