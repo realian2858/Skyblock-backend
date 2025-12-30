@@ -1,13 +1,12 @@
-// ingest.js (v4 - Cloud Run ready, runs forever every 2 minutes)
+// ingest.js (v5 - Cloud Run Job: RUN ONCE + EXIT)
 //
-// ✅ Full snapshot each cycle (all pages)
-// ✅ Upsert live auctions in bulk
+// ✅ Full snapshot each run (all pages)
+// ✅ Bulk upsert auctions
 // ✅ Build signature for BIN + when bytes/lore exists
 // ✅ Mark not-seen auctions as ended (LBIN correctness)
 // ✅ Finalize ended -> sales in batches
 // ✅ Backfill sales.item_key lightly
-// ✅ RUNS FOREVER: one cycle every 2 minutes (no overlap)
-// ✅ Graceful shutdown on SIGTERM/SIGINT
+// ✅ Runs ONCE then exits (Cloud Run Job friendly)
 //
 // Env required:
 // - DATABASE_URL
@@ -33,9 +32,6 @@ function requireEnv(name) {
 const DATABASE_URL = requireEnv("DATABASE_URL");
 const HYPIXEL_KEY = requireEnv("HYPIXEL_API_KEY");
 
-// Cycle timing
-const LOOP_EVERY_MS = 120_000; // ✅ 2 minutes
-
 // Hypixel API pacing
 const PAGE_DELAY_MS = 90;
 
@@ -50,7 +46,7 @@ const FINALIZE_MAX_LOOPS = 60;
 const SALES_KEY_BACKFILL_BATCH = 20000;
 
 // Safety
-const MAX_PAGES_HARD_CAP = 200; // just a guard in case API goes weird
+const MAX_PAGES_HARD_CAP = 200;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -59,7 +55,6 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 ========================= */
 const pool = new pg.Pool({
   connectionString: DATABASE_URL,
-  // optional timeouts; safe defaults:
   max: 10,
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 15_000,
@@ -142,7 +137,6 @@ async function upsertAuctionsBulk(list, now) {
     const lore = nonEmptyText(a.item_lore);
     const bytes = nonEmptyText(a.item_bytes);
 
-    // Build signature for BIN auctions and anything with lore/bytes
     let sig = null;
     if (bin || lore || bytes) {
       sig = await safeBuildSignature({
@@ -387,9 +381,9 @@ async function backfillSalesItemKeys({ batch = SALES_KEY_BACKFILL_BATCH } = {}) 
 }
 
 /* =========================
-   One full cycle
+   One full run
 ========================= */
-export async function syncOnce() {
+async function syncOnce() {
   const now = Date.now();
 
   const first = await fetchPage(0);
@@ -399,7 +393,6 @@ export async function syncOnce() {
   console.log(`📦 Sync: ${totalPages} pages`);
 
   let upserted = 0;
-
   upserted += await upsertAuctionsBulk(first.auctions || [], now);
 
   for (let p = 1; p < totalPages; p++) {
@@ -422,16 +415,11 @@ export async function syncOnce() {
   if (filled > 0) console.log(`🧩 Backfilled sales.item_key: ${filled}`);
 
   console.log(`✅ Upserted live: ${upserted} | Finalized sales: ${totalFinalized}`);
-  return { upserted, totalFinalized, filled, totalPages };
 }
 
 /* =========================
-   Forever runner (every 2 minutes, no overlap)
+   ENTRYPOINT (Job: run once + exit)
 ========================= */
-let shuttingDown = false;
-let running = false;
-
-// --- RUN ONCE ENTRYPOINT (for Cloud Run Jobs) ---
 async function main() {
   console.log("🚀 INGEST BOOT", new Date().toISOString());
   console.log("ENV OK:", {
@@ -445,67 +433,12 @@ async function main() {
 }
 
 main()
-  .then(() => process.exit(0))
-  .catch((e) => {
+  .then(async () => {
+    try { await pool.end(); } catch {}
+    process.exit(0);
+  })
+  .catch(async (e) => {
     console.error("❌ INGEST FAILED", e?.stack || e);
+    try { await pool.end(); } catch {}
     process.exit(1);
   });
-
-  while (!shuttingDown) {
-    if (running) {
-      // Should never happen (we control it), but guard anyway.
-      console.log("⏳ Previous cycle still running, skipping this tick");
-      await sleep(5_000);
-      continue;
-    }
-
-    running = true;
-    const t0 = Date.now();
-    try {
-      console.log("🟦 Cycle start", new Date().toISOString());
-      await syncOnce();
-      const dt = Date.now() - t0;
-      console.log(`🟩 Cycle end (${dt} ms)`, new Date().toISOString());
-    } catch (err) {
-      console.error("🟥 Cycle error:", err?.message || err);
-    } finally {
-      running = false;
-    }
-
-    // wait until next cycle
-    for (let waited = 0; waited < LOOP_EVERY_MS && !shuttingDown; ) {
-      const step = Math.min(2_000, LOOP_EVERY_MS - waited);
-      await sleep(step);
-      waited += step;
-    }
-  }
-
-  console.log("🛑 INGEST STOPPING");
-}
-
-async function shutdown(signal) {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  console.log(`🛑 Received ${signal}, shutting down...`);
-
-  // give a short window for current cycle to finish
-  const start = Date.now();
-  while (running && Date.now() - start < 20_000) {
-    await sleep(500);
-  }
-
-  try {
-    await pool.end();
-  } catch {}
-
-  process.exit(0);
-}
-
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
-
-main().catch((err) => {
-  console.error("INGEST FATAL:", err?.message || err);
-  process.exit(1);
-});
-
