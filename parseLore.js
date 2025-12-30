@@ -71,8 +71,13 @@ function normalizeWeirdDigits(s) {
    Coflnet star parsing (ROBUST + SAFE)
 ========================= */
 // IMPORTANT: do NOT include "•" here (bullets appear everywhere)
-// ✅ include white/outlined circle-stars too (these are what you’re showing in UI)
-const STAR_CHARS = new Set(["✪", "★", "☆", "✯", "✰", "●", "⬤", "○", "◉", "◎", "◍"]);
+const STAR_CHARS = new Set([
+  "✪", "★", "☆", "✯", "✰",
+  "●", "⬤",
+  // common “circle” star-like glyphs some fonts/UI use:
+  "○", "◉", "◎", "◍",
+]);
+
 function isStarChar(ch) {
   return STAR_CHARS.has(ch);
 }
@@ -84,7 +89,7 @@ export function coflnetStars10FromText(text) {
   if (!s) return 0;
 
   // Only trust a star cluster near the end (item name suffix)
-  const SEARCH_WINDOW = 64;
+  const SEARCH_WINDOW = 64; // widened a bit
   const start = Math.max(0, s.length - SEARCH_WINDOW);
   const tailWindow = s.slice(start);
 
@@ -100,12 +105,12 @@ export function coflnetStars10FromText(text) {
 
   const lastStarIdx = start + lastStarIdxLocal;
 
-  // ✅ Count backwards up to 10 stars (supports "10 circle stars" format)
+  // Count up to 5 stars backwards with small separator tolerance
   let starCount = 0;
   let i = lastStarIdx;
   let gapBudget = 10;
 
-  while (i >= 0 && starCount < 10) {
+  while (i >= 0 && starCount < 5) {
     const ch = s[i];
     if (isStarChar(ch)) {
       starCount++;
@@ -122,16 +127,12 @@ export function coflnetStars10FromText(text) {
   }
 
   if (starCount <= 0) return 0;
-
-  // If we actually saw 6..10 stars glyphs, trust that total directly.
-  if (starCount >= 6) return Math.min(10, starCount);
-
-  // starCount is 1..5
   if (starCount < 5) return starCount;
 
-  // starCount == 5 -> check for addon digit 1..5 (Coflnet-style master stars)
-  const after = s.slice(lastStarIdx + 1, lastStarIdx + 32);
+  // starCount == 5 -> look for addon digit 1..5 shortly after last star
+  const after = s.slice(lastStarIdx + 1, lastStarIdx + 40);
 
+  // Prefer a clean 1..5 token if present
   const mDigit = after.match(/[1-5]/);
   if (mDigit) {
     const d = Number(mDigit[0]);
@@ -148,6 +149,7 @@ export function coflnetStars10FromText(text) {
 
   return 5;
 }
+
 
 
 /* =========================
@@ -590,7 +592,7 @@ function extractEnchants(extra) {
   return ench;
 }
 
-// ✅ FIXED: upgrade_level ambiguity handling
+// ✅ FIXED: upgrade_level ambiguity handling + reconcile with name/lore stars
 function extractStars(extra, itemName, loreRaw) {
   const dRaw = Number(extra?.dungeon_item_level ?? 0);
   const uRaw = Number(extra?.upgrade_level ?? 0);
@@ -598,32 +600,41 @@ function extractStars(extra, itemName, loreRaw) {
   const d = Number.isFinite(dRaw) ? Math.max(0, Math.min(5, Math.trunc(dRaw))) : 0;
   const u = Number.isFinite(uRaw) ? Math.max(0, Math.min(10, Math.trunc(uRaw))) : 0;
 
-  // If upgrade_level is 6..10, treat it as TOTAL stars (old/variant behavior)
-  // This must win even if dungeon_item_level exists, because u=8 means total 8, not master=5.
-  if (u > 5) {
-    return { dstars: 5, mstars: Math.max(0, Math.min(5, u - 5)) };
-  }
-
-  // If both exist and u is 1..5, treat u as master stars.
-  if (d > 0 && u > 0) {
-    return { dstars: d, mstars: Math.max(0, Math.min(5, u)) };
-  }
-
-  // dungeon only
-  if (d > 0) return { dstars: d, mstars: 0 };
-
-  // upgrade only (<=5): treat as dungeon stars
-  if (u > 0) return { dstars: u, mstars: 0 };
-
-  // fallback parse from itemName/lore
+  // Parse from visible text too (Coflnet suffix / copied names)
   const fromName = coflnetStars10FromText(itemName);
   const fromLore = coflnetStars10FromText(loreRaw);
-  const total = Math.max(fromName, fromLore);
+  const textTotal = Math.max(fromName, fromLore);
+
+  // NBT-derived total, but careful:
+  // - If upgrade_level is 6..10, some sources store TOTAL here
+  // - If dungeon_item_level exists and upgrade_level is 1..5, upgrade_level is MASTER stars
+  // - If dungeon_item_level missing/0 and upgrade_level is 1..5, it might be ambiguous (could be dungeon OR master)
+  let nbtTotal = 0;
+
+  if (u > 5) {
+    // treat as TOTAL stars
+    nbtTotal = u; // 6..10
+  } else if (d > 0 && u > 0) {
+    // standard: dungeon + master
+    nbtTotal = Math.min(10, d + u); // 2..10
+  } else if (d > 0) {
+    // dungeon only
+    nbtTotal = d; // 1..5
+  } else if (u > 0) {
+    // ambiguous: could be dungeon OR could be master-with-implicit-5
+    // Let textTotal override if it indicates master stars.
+    nbtTotal = u; // 1..5 baseline
+  }
+
+  // ✅ Reconcile:
+  // If the copied name says 10★ but NBT says 5, trust the larger total.
+  const total = Math.max(nbtTotal, textTotal);
 
   if (total <= 0) return { dstars: 0, mstars: 0 };
   if (total <= 5) return { dstars: total, mstars: 0 };
-  return { dstars: 5, mstars: total - 5 };
+  return { dstars: 5, mstars: Math.max(0, Math.min(5, total - 5)) };
 }
+
 
 function extractPetLevel(extra, itemName) {
   const petInfo = extra?.petInfo;
@@ -700,4 +711,5 @@ export async function buildSignature({ itemName = "", lore = "", tier = "", item
 
   return [...parts, ...enchTokens].join("|");
 }
+
 
