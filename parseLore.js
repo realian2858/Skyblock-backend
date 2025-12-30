@@ -1,17 +1,18 @@
-// parseLore.js (FULL WORKING v5 - adds PET HELD ITEM + keeps everything else stable)
+// parseLore.js (v6 - Coflnet stars + WI case-safe + pet item + stable exports)
+//
 // Exports used by server.js/ingest.js:
 // cleanText, normKey, normalizeEnchantKey,
 // canonicalItemKey, canonicalItemDisplay,
 // parseEnchantList, displayEnchant,
 // tierFor,
+// coflnetStars10FromText,
 // buildSignature({ itemName, lore, tier, itemBytes })
 //
-// NEW in v5:
-// - Signature now includes pet_item:<key> when detectable (so Legendary Ender Dragon Tier Boost can be filtered)
-// - Pet item is extracted from:
-//   1) ExtraAttributes (if present)
-//   2) Lore lines: "Held Item: ..." or "Pet Item: ..."
-//   3) (Fallback) nothing => not included (server should treat missing as "unverifiable")
+// NEW in v6:
+// ✅ Coflnet star parsing: "✪✪✪✪✪➌" => 8 (5 + 3)
+// ✅ Handles weird symbols between name and stars
+// ✅ If NBT stars missing, falls back to coflnet parsing from itemName/lore
+// ✅ WI detection: canonical key lowercase + scroll tokens case-insensitive
 
 import { gunzipSync } from "node:zlib";
 import { parse as parseNbt } from "prismarine-nbt";
@@ -21,9 +22,9 @@ import { parse as parseNbt } from "prismarine-nbt";
 ========================= */
 export function cleanText(s) {
   let x = String(s ?? "").normalize("NFKC");
-  x = x.replace(/§./g, ""); // MC color codes
-  x = x.replace(/[’]/g, "'"); // normalize apostrophes
-  x = x.replace(/[^\p{L}\p{N}\s']/gu, " "); // letters/numbers/spaces/apostrophes
+  x = x.replace(/§./g, "");
+  x = x.replace(/[’]/g, "'");
+  x = x.replace(/[^\p{L}\p{N}\s']/gu, " ");
   x = x.replace(/\s+/g, " ").trim();
   return x;
 }
@@ -38,41 +39,93 @@ export function normKey(s) {
 }
 
 /* =========================
-   Unicode variant stripping
-   (Fixes "Dark Claymore ➊" etc)
+   Digit normalization (for star digits too)
 ========================= */
-const CIRCLED_DIGITS = "⓪①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳";
-const DINGBAT_DIGITS = "➊➋➌➍➎➏➐➑➒➓";
+const DIGIT_CHAR_MAP = (() => {
+  const map = new Map();
+  const addRange = (startDigit, chars) => {
+    for (let i = 0; i < chars.length; i++) map.set(chars[i], String(startDigit + i));
+  };
+  addRange(0, "⓪①②③④⑤⑥⑦⑧⑨");
+  addRange(0, "０１２３４５６７８９");
+  addRange(1, "➊➋➌➍➎➏➐➑➒➓");
+  addRange(1, "❶❷❸❹❺❻❼❽❾❿");
+  addRange(1, "⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾");
+  addRange(0, "⁰¹²³⁴⁵⁶⁷⁸⁹");
+  addRange(0, "₀₁₂₃₄₅₆₇₈₉");
+  return map;
+})();
+
+function normalizeWeirdDigits(s) {
+  const x = String(s ?? "").normalize("NFKD");
+  let out = "";
+  for (const ch of x) out += DIGIT_CHAR_MAP.get(ch) ?? ch;
+  return out;
+}
+
+/* =========================
+   Coflnet star parsing
+   Examples:
+     "Withered Dark Claymore ✪✪✪✪✪➌" => 8
+     "Item ✪✪✪✪✪➎" => 10
+     "Item ✪✪✪" => 3
+   Handles random symbols between name and stars.
+========================= */
+const STAR_RE = /[✪★☆✯✰]/g;
+
+// returns 0..10
+export function coflnetStars10FromText(text) {
+  const s = normalizeWeirdDigits(String(text ?? ""));
+  if (!s) return 0;
+
+  // Count star glyphs (cap at 5 because coflnet uses 5 + digit)
+  const starCount = Math.min(5, (s.match(STAR_RE) || []).length);
+
+  // Look for a trailing digit after the last star run.
+  // Often appears as "...✪✪✪✪✪3" or "...✪✪✪✪✪ 3"
+  let extra = 0;
+  if (starCount > 0) {
+    const lastStarIdx = Math.max(s.lastIndexOf("✪"), s.lastIndexOf("★"), s.lastIndexOf("☆"), s.lastIndexOf("✯"), s.lastIndexOf("✰"));
+    if (lastStarIdx >= 0) {
+      const tail = s.slice(lastStarIdx + 1).replace(/[^0-9]/g, "");
+      if (tail) {
+        const n = Number(tail[0]);
+        // only 1..5 is valid “master digit”
+        if (Number.isFinite(n) && n >= 1 && n <= 5) extra = n;
+      }
+    }
+  }
+
+  // Coflnet rule: if you have 5 base stars, digit adds (master stars)
+  // If <5 stars, digit is usually NOT used; we ignore it.
+  const total = starCount === 5 ? (5 + extra) : starCount;
+
+  return Math.max(0, Math.min(10, total));
+}
+
+/* =========================
+   Unicode variant stripping (for item key)
+========================= */
 const OTHER_VARIANT_CHARS_RE =
   /[\u24EA\u2460-\u2473\u24F4-\u24FF\u2776-\u277F\u2780-\u2793\u278A-\u2793]/gu;
 
 function stripVariantDigits(s) {
   const str = String(s ?? "").normalize("NFKC");
-  const removed = str
-    .replace(OTHER_VARIANT_CHARS_RE, " ")
-    .split("")
-    .filter((ch) => !CIRCLED_DIGITS.includes(ch) && !DINGBAT_DIGITS.includes(ch))
-    .join("");
-  return removed;
+  return str.replace(OTHER_VARIANT_CHARS_RE, " ");
 }
 
 /* =========================
    Reforge stripping
 ========================= */
 const REFORGE_PREFIXES = new Set([
-  // bows
   "hasty","precise","rapid","spiritual","fine","neat","grand","awkward","rich","headstrong","unreal",
-  // weapons
   "fabled","withered","heroic","spicy","sharp","legendary","dirty","fanged","suspicious","bulky",
   "gilded","warped","coldfused","fair","gentle","odd","fast","jerry's",
-  // armor
   "ancient","giant","perfect","renowned","jaded","loving","necrotic","empowered","spiked","cubic",
   "hyper","submerged","pure","smart","clean","fierce","heavy","light","wise","titanic","mythic","waxed",
   "fortified","strengthened","glistening","blooming","rooted","royal","blood-soaked",
-  // tools
   "auspicious","fleet","refined","heated","ambered","magnetic","mithraic","lustrous","glacial","blazing",
   "blessed","bountiful","moil","toil","earthy","moonglade",
-  // fishing
   "salty","treacherous","sturdy","pitchin'","lucky","aquadynamic","chilly","stiff",
 ]);
 
@@ -101,8 +154,6 @@ export function canonicalItemKey(name) {
 
   s = s.replace(/\(([^)]*)\)/g, " ");
   s = s.replace(/\[([^\]]*)\]/g, " ");
-
-  s = s.replace(/\b\d+\s*[*★✪]\b/g, " ");
 
   s = s.replace(/(\p{L})(\d+)/gu, "$1 $2");
 
@@ -188,7 +239,7 @@ export function displayEnchant(nameKeyRaw, lvl) {
 }
 
 /* =========================
-   Enchant tiering (YOUR LIST)
+   Enchant tiering (YOUR MAP)
 ========================= */
 const ENCHANT_TIER_MAP = new Map();
 
@@ -344,7 +395,7 @@ function mapToEnchantTokens(map) {
 }
 
 /* =========================
-   Pet held-item extraction (NEW)
+   Pet held item extraction
 ========================= */
 function canonicalPetItemKey(label) {
   const k = normKey(String(label || "")).replace(/\s+/g, "_");
@@ -361,21 +412,14 @@ function parsePetHeldItemFromLore(loreRaw) {
 
   for (const rawLine of lines) {
     const line = rawLine.normalize("NFKC").trim();
-
-    // Match both:
-    // "Held Item: Hephaestus Relic"
-    // "Held Item Hephaestus Relic" (in case formatting differs)
     let m = line.match(/^(held item|pet item)\s*:\s*(.+)$/i);
     if (!m) m = line.match(/^(held item|pet item)\s+(.+)$/i);
-
     if (m) return cleanText(m[2]).trim();
   }
   return "";
 }
 
-
 function extractPetHeldItem(extra, loreRaw) {
-  // Try ExtraAttributes first (names vary across versions)
   const candidates = [
     extra?.petItem,
     extra?.pet_item,
@@ -387,14 +431,12 @@ function extractPetHeldItem(extra, loreRaw) {
 
   for (const c of candidates) {
     if (typeof c === "string" && c.trim()) {
-      // some store "TIER_BOOST" -> normalize nicely
       const label = c.replace(/_/g, " ").trim();
       const key = canonicalPetItemKey(label);
       if (key) return { label, key };
     }
   }
 
-  // Fallback: parse from lore if present
   const loreLabel = parsePetHeldItemFromLore(loreRaw);
   if (loreLabel) {
     const key = canonicalPetItemKey(loreLabel);
@@ -503,20 +545,32 @@ function extractEnchants(extra) {
   return ench;
 }
 
-function extractStars(extra) {
+// ✅ Prefer true NBT if present; else fallback to coflnet text parsing.
+function extractStars(extra, itemName, loreRaw) {
   const d = Number(extra?.dungeon_item_level ?? 0);
   const u = Number(extra?.upgrade_level ?? 0);
 
-  const dstars = Number.isFinite(d) ? Math.max(0, Math.min(5, Math.trunc(d))) : 0;
-
-  let mstars = 0;
-  if (Number.isFinite(u)) {
+  // If upgrade_level is valid, interpret it into dstars/mstars
+  if (Number.isFinite(u) && u > 0) {
     const total = Math.max(0, Math.min(10, Math.trunc(u)));
-    if (total > 5) mstars = total - 5;
-    if (!dstars && total <= 5) return { dstars: total, mstars: 0 };
+    if (total <= 5) return { dstars: total, mstars: 0 };
+    return { dstars: 5, mstars: total - 5 };
   }
 
-  return { dstars, mstars };
+  // Else dungeon_item_level only
+  if (Number.isFinite(d) && d > 0) {
+    const dstars = Math.max(0, Math.min(5, Math.trunc(d)));
+    return { dstars, mstars: 0 };
+  }
+
+  // Fallback: parse from name/lore coflnet style
+  const fromName = coflnetStars10FromText(itemName);
+  const fromLore = coflnetStars10FromText(loreRaw);
+
+  const total = Math.max(fromName || 0, fromLore || 0);
+  if (total <= 0) return { dstars: 0, mstars: 0 };
+  if (total <= 5) return { dstars: total, mstars: 0 };
+  return { dstars: 5, mstars: total - 5 };
 }
 
 function extractPetLevel(extra, itemName) {
@@ -539,30 +593,24 @@ function extractPetLevel(extra, itemName) {
 }
 
 function extractCosmetics(extra) {
-  const dye =
-    typeof extra?.dye_item === "string" ? toSigKey(extra.dye_item.replace(/_/g, " ")) : "";
-
-  const skin =
-    typeof extra?.skin === "string" ? toSigKey(extra.skin.replace(/_/g, " ")) : "";
-
+  const dye = typeof extra?.dye_item === "string" ? toSigKey(extra.dye_item.replace(/_/g, " ")) : "";
+  const skin = typeof extra?.skin === "string" ? toSigKey(extra.skin.replace(/_/g, " ")) : "";
   const petSkinRaw = extra?.petSkin ?? extra?.pet_skin ?? "";
   const petskin =
     typeof petSkinRaw === "string" && petSkinRaw ? toSigKey(String(petSkinRaw).replace(/_/g, " ")) : "";
 
-  return {
-    dye: dye || "none",
-    skin: skin || "none",
-    petskin: petskin || "none",
-  };
+  return { dye: dye || "none", skin: skin || "none", petskin: petskin || "none" };
 }
 
 function extractWitherImpactFlag(itemName, rootParsed) {
-  const key = canonicalItemKey(itemName);
-  const isBlade = ["hyperion", "Hyperion", "astraea", "Astraea", "scylla", "Scylla", "valkyrie", "Valkyrie"].some((w) => key.includes(w));
+  const key = canonicalItemKey(itemName); // already lower-ish tokens
+  const k = normKey(key); // ensure lowercase normalized
+  const isBlade =
+    k.includes("hyperion") || k.includes("astraea") || k.includes("scylla") || k.includes("valkyrie");
   if (!isBlade) return false;
 
-  const s = JSON.stringify(unwrap(rootParsed) || {});
-  return s.includes("IMPLOSION_SCROLL") && s.includes("SHADOW_WARP_SCROLL") && s.includes("WITHER_SHIELD_SCROLL");
+  const s = JSON.stringify(unwrap(rootParsed) || {}).toLowerCase();
+  return s.includes("implosion_scroll") && s.includes("shadow_warp_scroll") && s.includes("wither_shield_scroll");
 }
 
 /* =========================
@@ -575,13 +623,11 @@ export async function buildSignature({ itemName = "", lore = "", tier = "", item
   const enchMap = extractEnchants(extra);
   const enchTokens = mapToEnchantTokens(enchMap);
 
-  const { dstars, mstars } = extractStars(extra);
+  const { dstars, mstars } = extractStars(extra, itemName, lore);
   const hasWI = extractWitherImpactFlag(itemName, rootParsed);
   const petLevel = extractPetLevel(extra, itemName);
 
   const { dye, skin, petskin } = extractCosmetics(extra);
-
-  // NEW: pet held item
   const petHeld = extractPetHeldItem(extra, lore);
 
   const tierKey = normKey(tier).replace(/\s+/g, "_");
@@ -595,10 +641,11 @@ export async function buildSignature({ itemName = "", lore = "", tier = "", item
   if (dye && dye !== "none") parts.push(`dye:${dye}`);
   if (skin && skin !== "none") parts.push(`skin:${skin}`);
   if (petskin && petskin !== "none") parts.push(`petskin:${petskin}`);
-
-  // Only include if detected (server can treat missing as unverifiable)
   if (petHeld?.key) parts.push(`pet_item:${petHeld.key}`);
+
+  // Optional: also store stars10 directly for easy debugging/queries
+  const stars10 = Math.max(0, Math.min(10, (dstars || 0) + (mstars || 0)));
+  if (stars10) parts.push(`stars10:${stars10}`);
 
   return [...parts, ...enchTokens].join("|");
 }
-
