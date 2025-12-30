@@ -600,24 +600,37 @@ function extractEnchants(extra) {
 }
 
 // ✅ Prefer true NBT if present; else fallback to coflnet text parsing.
+// ✅ Correct Hypixel behavior:
+// dungeon_item_level = dungeon stars (0..5)
+// upgrade_level      = master stars (0..5)  (usually)
+// Some older items may store total stars in upgrade_level (0..10) when dungeon_item_level is missing.
 function extractStars(extra, itemName, loreRaw) {
-  const u = Number(extra?.upgrade_level ?? 0);
-  const d = Number(extra?.dungeon_item_level ?? 0);
+  const dRaw = Number(extra?.dungeon_item_level ?? 0);
+  const uRaw = Number(extra?.upgrade_level ?? 0);
 
-  // Prefer NBT total stars if it exists
-  if (Number.isFinite(u) && u > 0) {
-    const total = Math.max(0, Math.min(10, Math.trunc(u)));
-    if (total <= 5) return { dstars: total, mstars: 0 };
-    return { dstars: 5, mstars: total - 5 };
+  const d = Number.isFinite(dRaw) ? Math.max(0, Math.min(5, Math.trunc(dRaw))) : 0;
+  const u = Number.isFinite(uRaw) ? Math.max(0, Math.min(10, Math.trunc(uRaw))) : 0;
+
+  // Case 1 (common modern): both exist -> dungeon + master
+  // In this case upgrade_level is master stars (0..5)
+  if (d > 0 && u > 0) {
+    const m = Math.max(0, Math.min(5, u)); // treat as master stars
+    return { dstars: d, mstars: m };
   }
 
-  // dungeon_item_level sometimes stores dungeon stars
-  if (Number.isFinite(d) && d > 0) {
-    const dstars = Math.max(0, Math.min(5, Math.trunc(d)));
-    return { dstars, mstars: 0 };
+  // Case 2: dungeon stars exist only
+  if (d > 0) {
+    return { dstars: d, mstars: 0 };
   }
 
-  // Coflnet fallback from itemName OR lore (take max)
+  // Case 3: upgrade_level exists only
+  // Sometimes it's total stars 0..10 if dungeon_item_level absent
+  if (u > 0) {
+    if (u <= 5) return { dstars: u, mstars: 0 };
+    return { dstars: 5, mstars: Math.max(0, Math.min(5, u - 5)) };
+  }
+
+  // Case 4: fallback parse from itemName/lore (coflnet style)
   const fromName = coflnetStars10FromText(itemName);
   const fromLore = coflnetStars10FromText(loreRaw);
   const total = Math.max(fromName, fromLore);
@@ -626,6 +639,7 @@ function extractStars(extra, itemName, loreRaw) {
   if (total <= 5) return { dstars: total, mstars: 0 };
   return { dstars: 5, mstars: total - 5 };
 }
+
 
 function extractPetLevel(extra, itemName) {
   const petInfo = extra?.petInfo;
@@ -702,3 +716,4 @@ export async function buildSignature({ itemName = "", lore = "", tier = "", item
 
   return [...parts, ...enchTokens].join("|");
 }
+
