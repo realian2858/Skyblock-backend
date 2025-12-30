@@ -1,10 +1,11 @@
-// server.js (v11 - CLEAN AUTOCOMPLETE + ACCURATE LBIN + Cloud Run safe)
+// server.js (v12 - NO DUPES AUTOCOMPLETE + ACCURATE LBIN + Cloud Run safe)
 //
-// ✅ /api/items returns UNIQUE item_key (no duplicates)
-// ✅ label is cleaned (no reforges / shiny / star glyph spam)
-// ✅ /api/recommend prefers item_key (stable), still supports item text fallback
-// ✅ LBIN: cheapest PERFECT else PARTIAL (with signature rebuild fallback)
-// ✅ Removed syncOnce interval (ingest job handles DB refresh)
+// ✅ /api/items returns UNIQUE item_key AND UNIQUE label (no 5x Hyperion)
+// ✅ label is cleaned (no reforges / shiny / star glyph spam / weird symbols)
+// ✅ search matches both item_key and item_name
+// ✅ LBIN: cheapest PERFECT else PARTIAL
+// ✅ LBIN uses tight "alive" window (3 minutes) based on your 2-min ingest
+// ✅ No background sync loop (ingest job refreshes DB)
 
 import path from "path";
 import { fileURLToPath } from "url";
@@ -34,7 +35,20 @@ app.use(express.static(path.join(__dirname, "public")));
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 
 /* =========================
-   Display helper
+   Config
+========================= */
+const ITEMS_LIMIT_DEFAULT = 40;
+const ITEMS_LIMIT_MAX = 60;
+
+// If ingest runs every 2 minutes, "alive" should be small.
+// 3 minutes is safe and prevents stale auctions from being treated as live.
+const LIVE_ALIVE_MS = 3 * 60 * 1000;
+
+// LBIN query cap
+const LIVE_SCAN_LIMIT = 4000;
+
+/* =========================
+   Display cleaning
 ========================= */
 function stripStarGlyphs(s) {
   return String(s || "")
@@ -43,10 +57,7 @@ function stripStarGlyphs(s) {
     .trim();
 }
 
-/**
- * Remove reforges/shiny/etc from the FRONT of item names.
- * This is intentionally aggressive for autocomplete display.
- */
+// common reforges/prefixes (expand anytime)
 const REFORGE_PREFIXES = [
   "Shiny",
   "Heroic",
@@ -107,14 +118,21 @@ const REFORGE_RE = new RegExp(
   "i"
 );
 
-function cleanAutocompleteLabel(name, fallbackKey) {
-  let s = stripStarGlyphs(name);
+// Remove weird symbols but keep letters/numbers/spaces/'/-
+function stripNonWordButKeepNice(s) {
+  return String(s || "")
+    .replace(/[✪★☆✯✰●]+/g, "")
+    .replace(/[^\p{L}\p{N}\s'’-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
-  // remove weird symbols but keep letters/numbers/'/-
-  s = s.replace(/[^0-9A-Za-z\s'\-]/g, " ").replace(/\s+/g, " ").trim();
+// Aggressive front-stripping of reforges/prefixes
+function cleanAutocompleteLabel(name, fallbackKey) {
+  let s = stripNonWordButKeepNice(name);
 
   // repeatedly strip leading reforges (handles stacked prefixes)
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 4; i++) {
     const next = s.replace(REFORGE_RE, "").trim();
     if (next === s) break;
     s = next;
@@ -124,7 +142,7 @@ function cleanAutocompleteLabel(name, fallbackKey) {
 }
 
 /* =========================
-   Signature helpers
+   Signature parsing helpers
 ========================= */
 const RESERVED_SIG_KEYS = new Set([
   "tier",
@@ -233,6 +251,7 @@ function normUserKey(raw) {
   if (k === "none" || k === "any") return "";
   return k;
 }
+
 function parseUserPetLevel(raw) {
   const v = String(raw ?? "").trim();
   if (!v) return 0;
@@ -242,15 +261,13 @@ function parseUserPetLevel(raw) {
   return level >= 1 && level <= 200 ? level : 0;
 }
 
-/* =========================
-   Options helpers
-========================= */
 function listToOptions(labels) {
   return labels.map((l) => ({
     label: l,
     key: normKey(l.replace(/_/g, " ")).replace(/\s+/g, "_"),
   }));
 }
+
 function normalizeFromOptions(raw, options) {
   const k = normUserKey(raw);
   if (!k) return "";
@@ -332,14 +349,12 @@ const PETITEM_OPTIONS = listToOptions(PET_ITEM_LABELS);
 app.get("/api/petitems", (req, res) => {
   const q = normKey(req.query.q || "");
   const limit = Math.max(5, Math.min(60, Number(req.query.limit || 30)));
-  const items = !q
-    ? PETITEM_OPTIONS
-    : PETITEM_OPTIONS.filter((x) => normKey(x.label).includes(q));
+  const items = !q ? PETITEM_OPTIONS : PETITEM_OPTIONS.filter((x) => normKey(x.label).includes(q));
   res.json({ items: items.slice(0, limit) });
 });
 
 /* =========================
-   Cosmetics options (unchanged)
+   Cosmetics options (keep yours)
 ========================= */
 const DYE_LABELS = [
   "Aquamarine Dye","Archfiend Dye","Aurora Dye","Bingo Blue Dye","Black Ice Dye","Bone Dye","Brick Red Dye",
@@ -351,7 +366,8 @@ const DYE_LABELS = [
   "Pure Black Dye","Pure Blue Dye","Pure White Dye","Pure Yellow Dye","Red Tulip Dye","Rose Dye","Snowflake Dye",
   "Sunflower Dye","Sunset Dye","Tentacle Dye","Warden Dye","Wild Strawberry Dye"
 ];
-const SKIN_LABELS = ["Ablaze Skin","Admiral Skin","Baby Hydra Skin","Baby Skin","Black Widow Skin","Bloom Skin",
+const SKIN_LABELS = [
+  "Ablaze Skin","Admiral Skin","Baby Hydra Skin","Baby Skin","Black Widow Skin","Bloom Skin",
   "Blue Oni Reaper Mask Skin","Caduceus Mender Skin","Celestial Goldor's Helmet Skin",
   "Celestial Maxor's Helmet Skin","Celestial Necron's Helmet Skin","Celestial Storm's Helmet Skin",
   "Celestial Wither Goggles Skin","Corrupt Wither Goggles Helmet Skin","Crimson Skin",
@@ -364,7 +380,8 @@ const SKIN_LABELS = ["Ablaze Skin","Admiral Skin","Baby Hydra Skin","Baby Skin",
   "Shimmer Skin","Sly Fox Skin","Smoldering Ember Skin","Snowglobe Skin","Spirit Skin","Starknight Skin",
   "Thief Skin","True Warden Skin"
 ];
-const PET_SKIN_LABELS = ["Anubis Golden Dragon Skin","Ancient Golden Dragon Skin","Super Plushie Ender Dragon Skin",
+const PET_SKIN_LABELS = [
+  "Anubis Golden Dragon Skin","Ancient Golden Dragon Skin","Super Plushie Ender Dragon Skin",
   "Pastel Ender Dragon Skin","Undead Ender Dragon Skin","Neon Blue Ender Dragon Skin",
   "Neon Red Ender Dragon Skin","Neon Green Ender Dragon Skin","Neon Purple Ender Dragon Skin",
   "Neon Yellow Ender Dragon Skin","Neon Orange Ender Dragon Skin","Baby Blue Ender Dragon Skin",
@@ -372,47 +389,6 @@ const PET_SKIN_LABELS = ["Anubis Golden Dragon Skin","Ancient Golden Dragon Skin
   "Baby Yellow Ender Dragon Skin","Baby Orange Ender Dragon Skin",
   "Blue Whale Plushie Skin","Tiger Plushie Skin","Elephant Plushie Skin","Pig Plushie Skin","Bee Plushie Skin",
   "Cow Plushie Skin","Chicken Plushie Skin","Dog Plushie Skin","Cat Plushie Skin","Sheep Plushie Skin",
-  "Pink Plushie Megalodon Skin","Plushie Tyrannosaurus Skin","Dark Blue Plushie Elephant Skin",
-  "Purple Plushie Elephant Skin","Teal Plushie Elephant Skin","White Plushie Elephant Skin",
-  "Onyx Plush Baby Yeti Skin",
-  "Golden Dragon Level 1-200 Variants","Safari Elephant Skin","Catgirl Black Cat Skin","Monster Sheep Skin",
-  "Gummy Worm Scatha Skin","Cute Jellyfish Skin","Shell Shulked Turtle Skin","Spirit Orca Blue Whale Skin",
-  "Snow Crow Skin","Seasonal Griffin Skin",
-  "Molten Glacite Golem Skin","Cavern Glacite Golem Skin","Seagull Phoenix Skin","Flamingo Phoenix Skin",
-  "Gateway Endermite Skin","Cloud Mammoth Skin","Void Mammoth Skin","Genie Baby Goblin Skin","Jinn Goblin Skin",
-  "Red Panda Ocelot Skin","Panther Ocelot Skin","Bamboo Giraffe Skin","Cherry Giraffe Skin","Warped Giraffe Skin",
-  "Galaxy Parrot Skin","Buccaneer Parrot Skin","Toucan Parrot Skin","Gold Macaw Parrot Skin",
-  "Blue Chick Chicken Skin","Black Chick Chicken Skin","Pink Chick Chicken Skin","Turkey Chicken Skin",
-  "Rubber Chicken Chicken Skin","Banana Slug Skin","Cake Snail Skin","Lion Tamarin Monkey Skin","Lemur Monkey Skin",
-  "Golden Monkey Skin","Melting Snowman Skin","Ice Golem Snowman Skin","Silbrrrfish Silverfish Skin",
-  "Fossil T-Rex Skin","Baby Blue T-Rex Skin","Magma T-Rex Skin","Toxic T-Rex Skin","Jungle T-Rex Skin",
-  "Glacial Hedgehog Skin","Baby Emperor Penguin Skin","Field Mouse Rat Skin","Ninja Rat Skin","PiRate Rat Skin",
-  "Rat-stronaut Rat Skin","SecRat Service Rat Skin","SecuRaty Guard Rat Skin","Squeakheart Rat Skin",
-  "Despair Enderman Skin","Xenon Enderman Skin","Neon Enderman Skin","Nebula Enderman Skin","Dark Star Enderman Skin",
-  "Despair Wither Skeleton Skin","Dark Wither Skeleton Skin","Candy Slime Spirit Skin","Fairy Slime Spirit Skin",
-  "Elemental Water Spirit Skin","Elemental Fire Spirit Skin","Elemental Earth Spirit Skin","Elemental Air Spirit Skin",
-  "Mummy Jerry Skin","Handsome Jerry Skin","Leprechaun Jerry Skin","Red Elf Jerry Skin","Green Elf Jerry Skin",
-  "Fenrir Wolf Skin","Husky Wolf Skin","Dark Wolf Skin","Hellhound Wolf Skin","Skeleton Dog Wolf Skin",
-  "Loafed Tiger Skin","Golden Tiger Skin","Neon Tiger Skin","Saber-Tooth Tiger Skin",
-  "Loafed Black Cat Skin","Cardboard Box Black Cat Skin","Armaron Armadillo Skin","Enchanted Armadillo Skin",
-  "Seafoam Armadillo Skin","Glacial Armadillo Skin","Blizzard Bal Skin","Inferno Bal Skin",
-  "Black Lion Skin","White Lion Skin","Moonbloom Mooshroom Cow Skin","Moocelium Mooshroom Cow Skin",
-  "Hermit Baked Beans Ammonite Skin","Hermit Paua Shell Ammonite Skin","Hermit Sand Castle Ammonite Skin",
-  "Hermit Beach Ball Ammonite Skin","Hermit Graphite Ammonite Skin",
-  "Midnight Dolphin Skin","Snubfin Dolphin Skin","Green Snubfin Dolphin Skin","Red Snubfin Dolphin Skin",
-  "Purple Snubfin Dolphin Skin",
-  "Harlequin Flying Fish Skin","Chromari Squid Skin","Glow Squid Skin","Real Grandma Wolf Skin","End Golem Skin",
-  "Miner Mole Skin","Choco Magma Cube Skin","Pot O' Gold Rock Skin","Candy Cane Rock Skin","Ice Rock Skin",
-  "Black Widow Spider Skin","Peacock Spider Skin","Pink Tarantula Skin","Greenbottle Tarantula Skin",
-  "Cosmic Blue Whale Skin","Megalodon Shark Skin","Tiger Shark Skin","Great White Shark Skin","Whale Shark Skin",
-  "Neon Blue Megalodon Skin","Baby Megalodon Skin","Chroma Sheep Skin","White Wooly Sheep Skin","Black Wooly Sheep Skin",
-  "Chromatic Crush Sheep Skin","Purple Crushed Sheep Skin","Blue Crush Sheep Skin",
-  "Luminescent Jellyfish Skin","RGBee Bee Skin","Loyalty Kuudra Skin",
-  "Reindrake Griffin Skin","Aurora Reindeer Skin","Red Nose Reindeer Skin","Rudolph Reindeer Skin",
-  "Krampus Reindeer Skin","Jingle Bell Reindeer Skin","Peafowl Griffin Skin",
-  "Baby Ghast","Baby Magma Cube","Baby Slime","Baby Silverfish","Baby Spider","Baby Cave Spider","Baby Zombie",
-  "Baby Skeleton","Baby Creeper","Baby Enderman","Baby Bee","Baby Chicken","Baby Cow","Baby Pig","Baby Sheep",
-  "Baby Rabbit","Baby Ocelot","Baby Wolf","Baby Parrot","Baby Horse","Baby Squid","Baby Bat","Baby Jerry",
   "Baby Wither Skeleton"
 ];
 
@@ -426,15 +402,7 @@ const PETSKIN_OPTIONS = listToOptions(PET_SKIN_LABELS);
 function applyVerifiedFiltersOrNull(sig, filters) {
   if (!sig) return { ok: true, unverifiable: true };
 
-  const {
-    userWI,
-    userRarity,
-    userDye,
-    userSkin,
-    userPetSkin,
-    userPetLevel,
-    userPetItem,
-  } = filters;
+  const { userWI, userRarity, userDye, userSkin, userPetSkin, userPetLevel, userPetItem } = filters;
 
   if (userWI && !sigWI(sig)) return { ok: false, unverifiable: false };
   if (userRarity && sigTier(sig) !== userRarity) return { ok: false, unverifiable: false };
@@ -518,6 +486,7 @@ function scorePartial({ userEnchantsMap, inputStars10, sig, filters }) {
   const vf = applyVerifiedFiltersOrNull(sig, filters);
   if (!vf.ok) return null;
 
+  // unverifiable sig = weak score
   if (vf.unverifiable) score -= 2;
   else score += 2;
 
@@ -576,79 +545,125 @@ function scorePartial({ userEnchantsMap, inputStars10, sig, filters }) {
 }
 
 /* =========================
-   ✅ /api/items (CLEAN + UNIQUE + NO REFORGES)
-   Returns: { items: [{ key, label }] }
+   ✅ /api/items (NO DUPES by key OR label)
 ========================= */
 app.get("/api/items", async (req, res) => {
   try {
     const qRaw = String(req.query.q || "").trim();
     const q = qRaw.toLowerCase();
-    const limit = Math.min(60, Math.max(1, Number(req.query.limit || 40)));
+    const limit = Math.min(ITEMS_LIMIT_MAX, Math.max(1, Number(req.query.limit || ITEMS_LIMIT_DEFAULT)));
 
     if (!q) return res.json({ items: [] });
 
-    // Pull keys from BOTH sales (stable) and live auctions (fresh)
-    // Then choose the best label = shortest cleaned name among recent rows.
+    // Strategy:
+    // 1) Get recent candidate rows from sales + auctions (matching key OR name)
+    // 2) Build per-item_key label candidates
+    // 3) Pick a "best" label for that key using scoring
+    // 4) Dedupe final output by BOTH key and cleaned label
+
     const { rows } = await pool.query(
       `
-      WITH keys AS (
-        SELECT item_key
-        FROM (
-          SELECT item_key, ended_ts AS ts
-          FROM sales
-          WHERE item_key IS NOT NULL AND item_key <> ''
-          UNION ALL
-          SELECT item_key, last_seen_ts AS ts
-          FROM auctions
-          WHERE item_key IS NOT NULL AND item_key <> ''
-        ) t
-        WHERE item_key ILIKE '%' || $1 || '%'
-        GROUP BY item_key
-        ORDER BY MAX(ts) DESC
-        LIMIT $2
-      ),
-      names AS (
-        SELECT k.item_key, s.item_name
-        FROM keys k
-        JOIN LATERAL (
-          SELECT item_name
-          FROM sales
-          WHERE item_key = k.item_key
-            AND item_name IS NOT NULL AND item_name <> ''
-          ORDER BY ended_ts DESC
-          LIMIT 40
-        ) s ON true
+      WITH candidates AS (
+        SELECT item_key, item_name, ended_ts AS ts
+        FROM sales
+        WHERE item_key IS NOT NULL AND item_key <> ''
+          AND item_name IS NOT NULL AND item_name <> ''
+          AND (item_key ILIKE '%' || $1 || '%' OR item_name ILIKE '%' || $1 || '%')
+        UNION ALL
+        SELECT item_key, item_name, last_seen_ts AS ts
+        FROM auctions
+        WHERE item_key IS NOT NULL AND item_key <> ''
+          AND item_name IS NOT NULL AND item_name <> ''
+          AND (item_key ILIKE '%' || $1 || '%' OR item_name ILIKE '%' || $1 || '%')
       )
-      SELECT
-        item_key,
-        -- choose the shortest cleaned label from recent names (usually base item)
-        (ARRAY_AGG(item_name ORDER BY LENGTH(item_name), item_name))[1] AS raw_label
-      FROM names
-      GROUP BY item_key
-      ORDER BY item_key
+      SELECT item_key, item_name, ts
+      FROM candidates
+      ORDER BY ts DESC
+      LIMIT 2000
       `,
-      [q, limit]
+      [q]
     );
 
-    const items = rows
-      .map((r) => {
-        const key = String(r.item_key || "").trim();
-        const raw = r.raw_label || key;
-        const label = cleanAutocompleteLabel(raw, key);
-        return { key, label };
-      })
-      .filter((x) => x.key);
+    // Collect candidates per key (limit per key)
+    const perKey = new Map(); // key -> [{raw, cleaned, ts}]
+    for (const r of rows) {
+      const key = String(r.item_key || "").trim();
+      if (!key) continue;
 
-    // Final safety: dedupe by key
-    const seen = new Set();
-    const deduped = [];
-    for (const it of items) {
-      if (seen.has(it.key)) continue;
-      seen.add(it.key);
-      deduped.push(it);
+      const raw = String(r.item_name || "").trim();
+      if (!raw) continue;
+
+      const cleaned = cleanAutocompleteLabel(raw, key);
+      const ts = Number(r.ts || 0);
+
+      if (!perKey.has(key)) perKey.set(key, []);
+      const arr = perKey.get(key);
+
+      // cap per key so we don't do tons of work
+      if (arr.length < 40) arr.push({ raw, cleaned, ts });
     }
 
-    res.json({ items: deduped.slice(0, limit) });
+    // Choose the best label for a key:
+    // Prefer:
+    // - cleaned label that equals the canonical form of key (if it matches)
+    // - then most frequent cleaned label
+    // - tie-break: most recent timestamp
+    function pickBestLabel(key, list) {
+      if (!list || !list.length) return key;
+
+      const canonical = cleanAutocompleteLabel(key.replace(/_/g, " "), key).toLowerCase();
+
+      // frequency map
+      const freq = new Map();
+      for (const it of list) {
+        const k = it.cleaned.toLowerCase();
+        freq.set(k, (freq.get(k) || 0) + 1);
+      }
+
+      let best = null;
+
+      for (const it of list) {
+        const cl = it.cleaned.toLowerCase();
+        const score =
+          (cl === canonical ? 1000 : 0) +
+          (freq.get(cl) || 0) * 10 +
+          Math.min(999, Math.floor(it.ts / 1_000_000_000)); // weak recency component
+
+        if (!best || score > best.score) best = { label: it.cleaned, score };
+      }
+
+      return best?.label || key;
+    }
+
+    const items = [];
+    for (const [key, list] of perKey.entries()) {
+      const label = pickBestLabel(key, list);
+      items.push({ key, label });
+    }
+
+    // Dedupe final output by BOTH key and label (prevents 5x "Hyperion")
+    const seenKey = new Set();
+    const seenLabel = new Set();
+    const out = [];
+
+    for (const it of items) {
+      const key = String(it.key || "").trim();
+      const label = String(it.label || "").trim();
+      if (!key || !label) continue;
+
+      const lnorm = label.toLowerCase();
+
+      if (seenKey.has(key)) continue;
+      if (seenLabel.has(lnorm)) continue;
+
+      seenKey.add(key);
+      seenLabel.add(lnorm);
+      out.push({ key, label });
+
+      if (out.length >= limit) break;
+    }
+
+    res.json({ items: out });
   } catch (e) {
     res.status(500).json({ error: e?.message || String(e) });
   }
@@ -661,11 +676,8 @@ app.get("/api/recommend", async (req, res) => {
   try {
     const now = Date.now();
 
-    // ✅ Prefer stable key from frontend
     const itemKeyFromClient = String(req.query.item_key || "").trim();
-    const itemKey =
-      itemKeyFromClient ||
-      canonicalItemKey(String(req.query.item || ""));
+    const itemKey = itemKeyFromClient || canonicalItemKey(String(req.query.item || ""));
 
     if (!itemKey) {
       return res.json({
@@ -699,7 +711,6 @@ app.get("/api/recommend", async (req, res) => {
       userPetItem,
     };
 
-    // sales window
     const since = now - 120 * 24 * 60 * 60 * 1000;
 
     const { rows } = await pool.query(
@@ -737,18 +748,15 @@ app.get("/api/recommend", async (req, res) => {
         final_price: price,
         ended_ts: Number(r.ended_ts) || 0,
         signature: sig,
-
         dstars: sig ? sigDungeonStars(sig) : 0,
         mstars: sig ? sigMasterStars(sig) : 0,
         stars10: sig ? sigStars10(sig) : 0,
-
         wi: sig ? sigWI(sig) : false,
         dye: sig ? sigDye(sig) : "none",
         skin: sig ? sigSkin(sig) : "none",
         petskin: sig ? sigPetSkin(sig) : "none",
         petLevel: sig ? sigPetLevel(sig) : 0,
         petItem: sig ? sigPetItem(sig) : "none",
-
         score: sc.score,
         matched: sc.matched,
         allEnchants: sig
@@ -771,9 +779,7 @@ app.get("/api/recommend", async (req, res) => {
 
     /* =========================
        ✅ LIVE BIN (LBIN)
-       - pull recent live BIN auctions
-       - ensure signature exists (rebuild if missing)
-       - choose cheapest PERFECT else PARTIAL
+       Tight alive window + safe signature usage
     ========================= */
     const { rows: liveRows } = await pool.query(
       `
@@ -785,9 +791,9 @@ app.get("/api/recommend", async (req, res) => {
         AND item_key = $1
         AND last_seen_ts >= $2
       ORDER BY starting_bid ASC
-      LIMIT 4000
+      LIMIT $3
       `,
-      [itemKey, now - 15 * 60 * 1000]
+      [itemKey, now - LIVE_ALIVE_MS, LIVE_SCAN_LIMIT]
     );
 
     let bestPerfect = null;
@@ -798,8 +804,11 @@ app.get("/api/recommend", async (req, res) => {
       if (!Number.isFinite(price) || price <= 0) continue;
 
       let sig = String(a.signature || "").trim();
+
+      // If no signature, we MAY build it, but:
+      // - PERFECT requires signature (otherwise strictMatchQuality returns NONE)
+      // - PARTIAL scoring can still happen, but will be "unverifiable"
       if (!sig) {
-        // rebuild signature on-the-fly if DB row missing it
         sig = String(
           (await buildSignature({
             itemName: a.item_name || "",
@@ -810,8 +819,8 @@ app.get("/api/recommend", async (req, res) => {
         ).trim();
       }
 
-      const q = strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters });
-      if (q === "NONE") continue;
+      const quality = strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters });
+      if (quality === "NONE") continue;
 
       const sc = scorePartial({ userEnchantsMap, inputStars10, sig, filters });
       if (!sc) continue;
@@ -830,10 +839,10 @@ app.get("/api/recommend", async (req, res) => {
         petItem: sig ? sigPetItem(sig) : "none",
         score: sc.score,
         matched: sc.matched,
-        quality: q,
+        quality,
       };
 
-      if (q === "PERFECT") {
+      if (quality === "PERFECT") {
         if (!bestPerfect || cand.price < bestPerfect.price) bestPerfect = cand;
       } else {
         if (!bestPartial || cand.price < bestPartial.price) bestPartial = cand;
@@ -858,7 +867,7 @@ app.get("/api/recommend", async (req, res) => {
       live: liveBest,
     });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err?.message || String(err) });
   }
 });
 
