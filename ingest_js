@@ -1,0 +1,13 @@
+import { syncOnce } from "./ingest.js";
+
+async function main() {
+  console.log("🚀 INGEST JOB START", new Date().toISOString());
+  await syncOnce();
+  console.log("✅ INGEST JOB DONE", new Date().toISOString());
+  process.exit(0);
+}
+
+main().catch((e) => {
+  console.error("🟥 INGEST JOB FAIL:", e?.message || e);
+  process.exit(1);
+});
