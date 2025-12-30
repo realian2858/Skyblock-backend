@@ -1,4 +1,4 @@
-// public/script.js (v5 - FIXED WI VISIBILITY + robust wither blade detection)
+// public/script.js (v6 - nav + dropdown safety + WI refresh on view changes)
 
 function $(id) { return document.getElementById(id); }
 
@@ -76,9 +76,7 @@ function prettyFromKey(k) {
 }
 
 /* =========================
-   Wither Impact visibility (FIXED)
-   - Only toggles #wiRow (never hides other rows)
-   - Robust matching: Hyperion / hyperion / Withered Hyperion / etc.
+   Wither Impact visibility (robust)
 ========================= */
 function normItemKey(s) {
   return String(s || "")
@@ -89,7 +87,6 @@ function normItemKey(s) {
 }
 function isWitherBlade(itemKeyOrLabel) {
   const k = normItemKey(itemKeyOrLabel);
-  // matches exact word OR part of name
   return (
     k.includes("hyperion") ||
     k.includes("scylla") ||
@@ -229,7 +226,7 @@ function setUuidBtnState(btn, label, ok) {
 }
 
 /* =========================
-   Tabs / Views
+   Tabs / Views (hardened)
 ========================= */
 function setView(view) {
   const basics = $("view-basics");
@@ -248,6 +245,9 @@ function setView(view) {
   });
 
   if (activeLabel) activeLabel.textContent = isBasics ? "Basics" : "Advanced";
+
+  // ✅ ensure WI visibility is always correct when entering Advanced
+  if (!isBasics) updateWIVisibility();
 }
 
 /* =========================
@@ -343,12 +343,15 @@ function setupStars10Slider() {
 }
 
 /* =========================
-   Server-backed autocomplete
+   Server-backed autocomplete (hardened)
 ========================= */
 function setupAutocomplete({ inputId, boxId, endpoint, limit = 30, onPick }) {
   const input = $(inputId);
   const box = $(boxId);
   if (!input || !box) return;
+
+  // match your v12 CSS intention
+  box.style.zIndex = "5000";
 
   let timer = null;
   let controller = null;
@@ -394,7 +397,12 @@ function setupAutocomplete({ inputId, boxId, endpoint, limit = 30, onPick }) {
     }
   }
 
-  input.addEventListener("keydown", () => { input.dataset.key = ""; });
+  input.addEventListener("keydown", (e) => {
+    // typing resets the chosen "key"
+    if (e.key.length === 1 || e.key === "Backspace" || e.key === "Delete") input.dataset.key = "";
+    // ESC closes suggestions
+    if (e.key === "Escape") hide();
+  });
 
   input.addEventListener("input", () => {
     clearTimeout(timer);
@@ -434,7 +442,7 @@ function setupAutocomplete({ inputId, boxId, endpoint, limit = 30, onPick }) {
   document.addEventListener("click", (e) => {
     if (e.target === input || box.contains(e.target)) return;
     hide();
-  });
+  }, true);
 }
 
 function setupItemAutocomplete() {
@@ -455,6 +463,8 @@ function setupLocalAutocomplete({ inputId, boxId, list, limit = 30, onPick }) {
   const box = $(boxId);
   if (!input || !box) return;
 
+  box.style.zIndex = "5000";
+
   let timer = null;
 
   function hide() { box.style.display = "none"; box.innerHTML = ""; }
@@ -473,7 +483,10 @@ function setupLocalAutocomplete({ inputId, boxId, list, limit = 30, onPick }) {
     }
   }
 
-  input.addEventListener("keydown", () => { input.dataset.key = ""; });
+  input.addEventListener("keydown", (e) => {
+    if (e.key.length === 1 || e.key === "Backspace" || e.key === "Delete") input.dataset.key = "";
+    if (e.key === "Escape") hide();
+  });
 
   input.addEventListener("input", () => {
     clearTimeout(timer);
@@ -504,7 +517,7 @@ function setupLocalAutocomplete({ inputId, boxId, list, limit = 30, onPick }) {
   document.addEventListener("click", (e) => {
     if (e.target === input || box.contains(e.target)) return;
     hide();
-  });
+  }, true);
 }
 
 /* =========================
@@ -514,6 +527,8 @@ function setupEnchantAutocomplete() {
   const input = $("advEnchants");
   const box = $("enchSuggest");
   if (!input || !box) return;
+
+  box.style.zIndex = "5000";
 
   let timer = null;
 
@@ -538,6 +553,10 @@ function setupEnchantAutocomplete() {
       box.appendChild(div);
     }
   }
+
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") hide();
+  });
 
   input.addEventListener("input", () => {
     clearTimeout(timer);
@@ -568,7 +587,7 @@ function setupEnchantAutocomplete() {
   document.addEventListener("click", (e) => {
     if (e.target === input || box.contains(e.target)) return;
     hide();
-  });
+  }, true);
 }
 
 /* =========================
@@ -709,7 +728,7 @@ function renderAdvanced(outEl, data) {
         <div class="out-box-k">Range</div>
         <div class="out-box-v">${escapeHtml(rangeText)} <span class="out-box-s">(Top ${rc || 0})</span></div>
       </div>
-      <div class="out-box">
+      <div class="out-box out-box-lowest">
         <div class="out-box-k">Current Lowest Live Match</div>
         <div class="out-box-v">${escapeHtml(liveText)}</div>
         ${liveEnds ? `<div class="out-box-s">${escapeHtml(liveEnds)}</div>` : ""}
@@ -791,9 +810,12 @@ async function runAdvancedMode() {
    Wire once
 ========================= */
 document.addEventListener("DOMContentLoaded", () => {
+  // Tabs
   document.querySelectorAll(".browse-tabs .tab").forEach((t) => {
     t.addEventListener("click", () => setView(t.dataset.view));
   });
+
+  // Quick Jump buttons
   document.querySelectorAll(".js-nav").forEach((b) => {
     b.addEventListener("click", () => setView(b.dataset.view));
   });
@@ -806,7 +828,11 @@ document.addEventListener("DOMContentLoaded", () => {
   $("advItem")?.addEventListener("input", updateWIVisibility);
   updateWIVisibility();
 
-  $("advBtn")?.addEventListener("click", () => { setView("advanced"); runAdvancedMode(); });
+  $("advBtn")?.addEventListener("click", () => {
+    setView("advanced");
+    updateWIVisibility();
+    runAdvancedMode();
+  });
 
   document.addEventListener("click", async (e) => {
     const btn = e.target?.closest?.(".uuid-copy-btn");
