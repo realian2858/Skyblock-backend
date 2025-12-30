@@ -1,21 +1,10 @@
-/* public/style.css (FULL REWRITE v11 - FIXED ADVANCED CLIP + UNIFIED AUTOCOMPLETE)
-Goals:
-- Keep your V10 look (Market Echoes, compact layout, tier colors, etc.)
-- Fix "Advanced section disappeared" (was overflow clipping inside .adv-panel)
-- Keep Live Signature styling (even if field not used)
-- Keep Lowest Price box style
-- Unify mod-suggest + suggest-box dropdown behavior
-*/
+/* public/style.css (v12 - restore advanced + safe dropdowns) */
 
-/* =========================
-   Theme
-========================= */
 :root{
   --bg0:#060910;
   --bg1:#0B1423;
 
   --panel: rgba(255,255,255,.06);
-  --panel2: rgba(255,255,255,.085);
   --stroke: rgba(255,255,255,.11);
 
   --text: rgba(255,255,255,.93);
@@ -30,13 +19,11 @@ Goals:
   --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;
   --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
 
-  /* Tier colors */
   --tier-misc: rgba(255,255,255,.92);
   --tier-aa:   #ff2d2d;
   --tier-aaa:  #ffd24a;
   --tier-partial: #b56bff;
 
-  /* tighter type scale */
   --fs-0: 12px;
   --fs-1: 13.5px;
   --fs-2: 15px;
@@ -59,9 +46,7 @@ body{
     linear-gradient(180deg, var(--bg0), var(--bg1));
 }
 
-/* =========================
-    Topbar
-========================= */
+/* Topbar */
 .topbar{
   position: sticky;
   top:0;
@@ -70,7 +55,6 @@ body{
   background: rgba(6,9,16,.65);
   border-bottom: 1px solid rgba(255,255,255,.06);
 }
-
 .brand{
   width:100%;
   margin:0 auto;
@@ -80,7 +64,6 @@ body{
   gap:12px;
   align-items:center;
 }
-
 .brand-mark{
   width:36px;height:36px;
   border-radius:13px;
@@ -89,21 +72,10 @@ body{
   box-shadow: 0 10px 25px rgba(79,125,255,.25);
   font-weight: 1000;
 }
+.brand-text h1{ margin:0; font-size: clamp(17px, 1.3vw, 21px); letter-spacing:.2px; }
+.brand-text p{ margin:3px 0 0; font-size: var(--fs-0); color: var(--muted); }
 
-.brand-text h1{
-  margin:0;
-  font-size: clamp(17px, 1.3vw, 21px);
-  letter-spacing:.2px;
-}
-.brand-text p{
-  margin:3px 0 0;
-  font-size: var(--fs-0);
-  color: var(--muted);
-}
-
-/* =========================
-    Shell
-========================= */
+/* Shell */
 .shell{
   width:100%;
   max-width: 2100px;
@@ -111,9 +83,7 @@ body{
   padding: 14px 14px 36px;
 }
 
-/* =========================
-    Browse header + tabs
-========================= */
+/* Browse */
 .browse{
   margin-bottom:12px;
   border-radius:12px;
@@ -121,7 +91,6 @@ body{
   box-shadow: var(--shadow);
   border:1px solid rgba(255,255,255,.06);
 }
-
 .browse-title{
   background: linear-gradient(135deg, rgba(79,125,255,.92), rgba(62,230,208,.62));
   color: rgba(0,0,0,.86);
@@ -131,7 +100,6 @@ body{
   padding:12px 10px;
   font-size: 13px;
 }
-
 .browse-tabs{
   display:flex;
   justify-content:center;
@@ -139,7 +107,6 @@ body{
   padding:10px;
   background: rgba(0,0,0,.26);
 }
-
 .tab{
   min-width:120px;
   height:40px;
@@ -160,15 +127,11 @@ body{
   background: linear-gradient(135deg, rgba(79,125,255,.22), rgba(62,230,208,.14));
 }
 
-/* =========================
-    Views
-========================= */
+/* Views */
 .view{ display:none; }
 .view.active{ display:block; }
 
-/* =========================
-    Global grid
-========================= */
+/* Grid */
 .grid{
   display:grid;
   grid-template-columns: 360px 1fr;
@@ -177,9 +140,7 @@ body{
 }
 .col-left,.col-right{ display:flex; flex-direction:column; gap:14px; }
 
-/* =========================
-    Cards
-========================= */
+/* Cards */
 .card{
   border-radius: var(--r);
   background: var(--panel);
@@ -187,14 +148,12 @@ body{
   box-shadow: var(--shadow);
   overflow:hidden;
 }
-
 .card-hero{
   background:
     radial-gradient(900px 600px at 30% 0%, rgba(79,125,255,.13), transparent 55%),
     radial-gradient(700px 500px at 85% 10%, rgba(62,230,208,.10), transparent 55%),
     var(--panel);
 }
-
 .card-head{
   display:flex;
   justify-content:space-between;
@@ -202,12 +161,7 @@ body{
   padding:12px 14px 10px;
   border-bottom:1px solid rgba(255,255,255,.06);
 }
-
-.card-head h2{
-  margin:0;
-  font-size: var(--fs-3);
-  letter-spacing:.15px;
-}
+.card-head h2{ margin:0; font-size: var(--fs-3); letter-spacing:.15px; }
 
 .subcard{ padding:12px 14px; }
 .subcard + .subcard{ border-top:1px solid rgba(255,255,255,.06); }
@@ -219,15 +173,8 @@ body{
   gap:10px;
   margin-bottom: 8px;
 }
-.subcard-head h3{
-  margin:0;
-  font-size: var(--fs-2);
-  font-weight: 1000;
-}
-.subtle{
-  font-size: 12px;
-  color: rgba(255,255,255,.60);
-}
+.subcard-head h3{ margin:0; font-size: var(--fs-2); font-weight: 1000; }
+.subtle{ font-size: 12px; color: rgba(255,255,255,.60); }
 
 /* Pills */
 .pill{
@@ -241,9 +188,7 @@ body{
 .pill-alt{ border-color: rgba(62,230,208,.25); }
 .pill-hero{ border-color: rgba(79,125,255,.25); }
 
-/* =========================
-    Basics layout (Sell + Lowball side-by-side)
-========================= */
+/* Basics grid */
 .basics-grid{
   display:grid;
   grid-template-columns: 1fr 1fr;
@@ -253,9 +198,7 @@ body{
   .basics-grid{ grid-template-columns: 1fr; }
 }
 
-/* =========================
-    Inputs
-========================= */
+/* Inputs */
 label{
   display:block;
   margin:10px 0 6px;
@@ -263,7 +206,6 @@ label{
   color: rgba(255,255,255,.68);
   font-weight: 800;
 }
-
 input[type="text"], select{
   width:100%;
   height:40px;
@@ -276,27 +218,12 @@ input[type="text"], select{
   font-size: 13.5px;
   transition: box-shadow .12s ease, border-color .12s ease, background .12s ease;
 }
-
 input[type="text"]::placeholder{ color: rgba(255,255,255,.44); }
-
 input[type="text"]:focus, select:focus{
   border-color: rgba(79,125,255,.62);
   box-shadow: 0 0 0 4px rgba(79,125,255,.14);
   background: rgba(0,0,0,.34);
 }
-
-/* Live Signature Focus Field Styling (kept, harmless if unused) */
-#advLiveSignature{
-  border-color: rgba(62,230,208, 0.25);
-  background: rgba(62,230,208, 0.05);
-  font-family: var(--mono);
-}
-#advLiveSignature:focus{
-  border-color: var(--accent2);
-  box-shadow: 0 0 0 4px rgba(62,230,208, 0.15);
-}
-
-/* ✅ Better select + options visibility */
 select{
   appearance:none;
   background-image:
@@ -308,25 +235,13 @@ select{
   background-size: 6px 6px, 6px 6px;
   background-repeat: no-repeat;
 }
-select option{
-  background: #0c1422;
-  color: rgba(255,255,255,.95);
-}
+select option{ background: #0c1422; color: rgba(255,255,255,.95); }
 
-.hint{
-  margin-top:6px;
-  font-size: 12px;
-  color: rgba(255,255,255,.52);
-}
-
+.hint{ margin-top:6px; font-size: 12px; color: rgba(255,255,255,.52); }
 .row-2{ display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
-@media (max-width: 980px){
-  .row-2{ grid-template-columns: 1fr; }
-}
+@media (max-width: 980px){ .row-2{ grid-template-columns: 1fr; } }
 
-/* =========================
-    Buttons
-========================= */
+/* Buttons */
 .btn{
   height:40px;
   margin-top:10px;
@@ -350,7 +265,6 @@ select option{
   color: rgba(0,0,0,.86);
 }
 .btn-primary:hover{ filter: brightness(1.06); }
-
 .btn-wide{ width:100%; }
 .btn-ghost{ width:100%; margin-top:0; background: rgba(255,255,255,.05); }
 
@@ -366,15 +280,7 @@ select option{
 }
 .btn-icon:hover{ background: rgba(255,255,255,.10); }
 
-/* =========================
-    Suggestions dropdown (BASE)
-========================= */
-.suggest-wrap{ position:relative; }
-
-/* =========================
-    Advanced layout (match bottoms)
-    FIX: remove clipping + allow content to be visible
-========================= */
+/* Advanced layout */
 .adv-split{
   display:grid;
   grid-template-columns: 640px 1fr;
@@ -382,23 +288,14 @@ select option{
   padding:14px;
   align-items:stretch;
 }
-
-/* ✅ IMPORTANT FIX:
-   - overflow:hidden was clipping the rest of the advanced inputs when height collapsed
-   - keep rounded corners on inner panels via background + border radius
-*/
 .adv-panel{
   border-radius:16px;
   border:1px solid rgba(255,255,255,.10);
   background: rgba(0,0,0,.16);
-
-  overflow: visible;     /* ✅ do NOT clip panel contents */
   display:flex;
   flex-direction:column;
-  min-height: 0;         /* ✅ required for nested grid/flex sizing */
+  overflow: visible; /* allow dropdowns */
 }
-
-/* Keep header fixed; body can grow naturally */
 .adv-panel-head{
   padding:12px 14px;
   border-bottom:1px solid rgba(255,255,255,.08);
@@ -407,18 +304,10 @@ select option{
   align-items:baseline;
   gap:10px;
 }
-.adv-panel-title{
-  font-weight:1000;
-  letter-spacing:.15px;
-  font-size: var(--fs-3);
-}
-.adv-panel-sub{
-  font-size: 12px;
-  color: rgba(255,255,255,.58);
-}
+.adv-panel-title{ font-weight:1000; letter-spacing:.15px; font-size: var(--fs-3); }
+.adv-panel-sub{ font-size: 12px; color: rgba(255,255,255,.58); }
 
-/* left panel rows */
-.hero-row{ padding:12px 14px; }
+.hero-row{ padding:12px 14px; position: relative; }
 .hero-row + .hero-row{ border-top:1px solid rgba(255,255,255,.06); }
 
 .hero-row-3{
@@ -433,19 +322,9 @@ select option{
 }
 .hero-row-1{ padding: 10px 14px; }
 
-/* keep button area stable */
-.field-actions{
-  display:flex;
-  flex-direction:column;
-  gap:0;
-}
+.field-actions{ display:flex; flex-direction: column; }
 
-/* Range row */
-.range-row{
-  display:flex;
-  align-items:center;
-  gap:10px;
-}
+.range-row{ display:flex; align-items:center; gap:10px; }
 .range-row input[type="range"]{ width:100%; }
 .range-value{
   min-width: 28px;
@@ -455,9 +334,7 @@ select option{
   font-size: 12.5px;
 }
 
-/* =========================
-    WI Toggle
-========================= */
+/* WI Toggle */
 .toggle{
   display:flex;
   align-items:center;
@@ -491,17 +368,10 @@ select option{
   border-color: rgba(79,125,255,.35);
 }
 .toggle input:checked + .toggle-ui::after{ transform: translateX(18px); }
-.toggle-text{
-  font-size: 13px;
-  color: rgba(255,255,255,.90);
-  font-weight:1000;
-}
+.toggle-text{ font-size: 13px; color: rgba(255,255,255,.90); font-weight:1000; }
 
-/* =========================
-    Recommendation card: compact so everything fits
-========================= */
+/* Results */
 .results{ padding: 0 14px 14px; }
-
 .result-card{
   border-radius: 16px;
   border: 1px solid rgba(62,230,208,.16);
@@ -525,68 +395,30 @@ select option{
   line-height: 1.22;
 }
 
-.out-head{ opacity:.95; font-weight:1000; font-size: 13.5px; font-family: var(--sans); }
+.out-head{ opacity:.95; font-weight:1000; font-size: 13.5px; }
 .out-big{ margin-top:6px; font-weight:1000; font-size: 15.5px; font-family: var(--mono); }
-.out-sub{ margin-top:8px; opacity:.78; font-size: 12px; font-family: var(--sans); }
-.out-err{ font-weight: 1000; color: rgba(255,120,120,.95); font-family: var(--sans); }
+.out-sub{ margin-top:8px; opacity:.78; font-size: 12px; }
+.out-err{ font-weight: 1000; color: rgba(255,120,120,.95); }
 
-.out-grid{
-  margin-top:10px;
-  display:grid;
-  grid-template-columns: 1fr 1fr;
-  gap:8px;
-}
+.out-grid{ margin-top:10px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
 .out-box{
   border-radius: 13px;
   border: 1px solid rgba(255,255,255,.10);
   background: rgba(0,0,0,.18);
   padding:8px 10px;
 }
+.out-box-k{ font-size: 11.5px; color: rgba(255,255,255,.62); font-weight:900; }
+.out-box-v{ margin-top:5px; font-family: var(--mono); font-weight:1000; font-size: 12px; }
+.out-box-s{ opacity:.72; font-size: 10.5px; margin-left:6px; }
 
-/* Lowest Price Specialized Box (kept) */
-.out-box-lowest{
-  border-color: rgba(62,230,208,.3);
-  background: rgba(62,230,208,.05);
-}
-
-.out-box-k{
-  font-size: 11.5px;
-  color: rgba(255,255,255,.62);
-  font-weight:900;
-  font-family: var(--sans);
-}
-.out-box-v{
-  margin-top:5px;
-  font-family: var(--mono);
-  font-weight:1000;
-  font-size: 12px;
-}
-.out-box-s{
-  opacity:.72;
-  font-size: 10.5px;
-  margin-left:6px;
-  font-family: var(--sans);
-}
-.out-chips{
-  margin-top:10px;
-  display:flex;
-  gap:8px;
-  flex-wrap:wrap;
-}
-
-/* =========================
-    Market Echoes
-========================= */
+/* Market Echoes */
 .top3-grid{
   padding:12px;
   display:grid;
   grid-template-columns: repeat(3, minmax(240px, 1fr));
   gap:12px;
   align-items:stretch;
-  flex: 1;
-  min-height: 0;
 }
-
 .mini-card{
   border-radius:16px;
   border:1px solid rgba(255,255,255,.10);
@@ -595,17 +427,8 @@ select option{
   overflow:hidden;
   display:flex;
   flex-direction:column;
-  min-height: 0;
 }
 
-.mstar-num{
-  font-weight: 900;
-  font-size: 14px;
-  padding-left: 6px;
-  opacity: 0.95;
-}
-
-/* Stars display (Coflnet style) */
 .sb-stars{
   font-family: var(--mono);
   font-weight: 1000;
@@ -619,84 +442,9 @@ select option{
   opacity: .98;
 }
 
-/* header area */
-.mini-head{
-  display:flex;
-  justify-content:space-between;
-  gap:10px;
-  align-items:flex-start;
-}
-.mini-title{ display:flex; flex-direction:column; gap:5px; min-width:0; }
-.mini-name{
-  font-weight:1000;
-  font-size: 13.5px;
-  line-height: 1.15;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow:hidden;
-}
-.mini-price{
-  font-weight:1000;
-  white-space:nowrap;
-  font-size: 12.8px;
-  opacity:.95;
-  font-family: var(--mono);
-}
-
-/* chips inside cards smaller */
-.mini-tags{
-  margin-top:8px;
-  display:flex;
-  gap:6px;
-  flex-wrap:wrap;
-}
-.mini-meta{
-  margin-top:8px;
-  font-size: 12px;
-  color: rgba(255,255,255,.74);
-}
-.mini-actions{
-  margin-top:8px;
-  display:flex;
-  gap:8px;
-  flex-wrap:wrap;
-}
-
-.mini-scroll{
-  margin-top:8px;
-  overflow:hidden;
-  padding-right:0;
-}
-
-/* key list tighter */
-.mini-stack{ margin-top:8px; display:flex; flex-direction:column; gap:6px; }
-.mini-row{ display:flex; justify-content:space-between; gap:10px; }
-.mini-row-right{ white-space:nowrap; font-family: var(--mono); font-size: 11.5px; }
-
-/* UUID pinned at bottom */
-.mini-uuid{
-  margin-top:auto;
-  padding-top:8px;
-  font-size: 11px;
-  color: rgba(255,255,255,.55);
-  font-family: var(--mono);
-  word-break: break-all;
-  line-height: 1.2;
-}
-
-/* =========================
-    Enchants list
-========================= */
+/* Enchants */
 .ench-list{ margin-top:8px; display:flex; flex-direction:column; gap:6px; }
-.ench-more{ opacity:.70; margin-top:6px; font-size: 11.5px; }
-
-.ench-line{
-  display:flex;
-  align-items:flex-start;
-  gap:8px;
-}
-
+.ench-line{ display:flex; align-items:flex-start; gap:8px; }
 .ench-tag{
   font-family: var(--mono);
   font-weight:1000;
@@ -708,47 +456,22 @@ select option{
   color: rgba(255,255,255,.86);
   flex: 0 0 auto;
 }
-
 .ench-text{
   font-size: 12.2px;
   font-weight: 900;
   line-height: 1.18;
   color: var(--tier-misc);
 }
-
-.ench-tag[data-tier="MISC-A"] + .ench-text{ color: var(--tier-misc); }
-.ench-tag[data-tier="AA"]     + .ench-text{ color: var(--tier-aa); }
-.ench-tag[data-tier="AAA"]    + .ench-text{ color: var(--tier-aaa); }
+.ench-tag[data-tier="AA"] + .ench-text{ color: var(--tier-aa); }
+.ench-tag[data-tier="AAA"] + .ench-text{ color: var(--tier-aaa); }
 .ench-tag[data-tier="PARTIAL"] + .ench-text{ color: var(--tier-partial); }
-
 .ench-tag[data-tier="PARTIAL"]{
   border-color: rgba(181,107,255,.45);
   background: rgba(181,107,255,.10);
   color: rgba(220,190,255,.95);
 }
 
-/* old “perfect match” styles kept (harmless) */
-.perfect-match-highlight{
-  border: 2px solid var(--accent2) !important;
-  box-shadow: 0 0 15px rgba(62, 230, 208, 0.4);
-  position: relative;
-}
-.perfect-badge{
-  position: absolute;
-  top: -10px;
-  right: 10px;
-  background: var(--accent2);
-  color: #000;
-  font-weight: 1000;
-  font-size: 10px;
-  padding: 2px 8px;
-  border-radius: 4px;
-  z-index: 5;
-}
-
-/* =========================
-    Metrics (Basics)
-========================= */
+/* Metrics + result lines */
 .metric{
   padding: 12px;
   border-radius: 14px;
@@ -765,7 +488,6 @@ select option{
   background-clip:text;
   color: transparent;
 }
-
 .result-stack{ margin-top: 10px; display:flex; flex-direction:column; gap:10px; }
 .result-line{
   padding: 10px 12px;
@@ -776,9 +498,7 @@ select option{
   font-size: 13px;
 }
 
-/* =========================
-    Chips / tags / UUID
-========================= */
+/* Chips + UUID */
 .tag, .chip{
   display:inline-flex;
   align-items:center;
@@ -791,10 +511,6 @@ select option{
   color: rgba(255,255,255,.88);
   font-weight:1000;
 }
-.tag-soft{ border-radius:12px; background: rgba(255,255,255,.05); }
-.tag-wi-on{ border-color: rgba(62,230,208,.35); }
-.tag-wi-off{ border-color: rgba(255,255,255,.12); }
-
 .uuid-copy-btn{
   padding:6px 10px;
   border-radius:999px;
@@ -808,94 +524,46 @@ select option{
 .uuid-copy-btn.uuid-ok{ border-color: rgba(62,230,208,.35); background: rgba(62,230,208,.10); }
 .uuid-copy-btn.uuid-bad{ border-color: rgba(255,80,80,.45); background: rgba(255,80,80,.10); }
 
-/* =========================
-    Footer
-========================= */
-.footer{
-  margin-top: 12px;
-  text-align:center;
-  font-size: 12px;
-  color: rgba(255,255,255,.48);
-}
+/* Footer */
+.footer{ margin-top: 12px; text-align:center; font-size: 12px; color: rgba(255,255,255,.48); }
 .muted{ color: rgba(255,255,255,.58); }
 
-/* =========================
-    Responsive
-========================= */
-@media (max-width: 1600px){
-  .top3-grid{ grid-template-columns: 1fr; }
-}
-
-@media (max-width: 1180px){
-  .adv-split{ grid-template-columns: 1fr; align-items:start; }
-  .top3-grid{ grid-template-columns: 1fr; }
-}
-
-@media (max-width: 980px){
-  .grid{ grid-template-columns: 1fr; }
-  .hero-row-3{ grid-template-columns: 1fr; }
-  .hero-row-2{ grid-template-columns: 1fr; }
-}
-
-@media (max-width: 620px){
-  .shell{ max-width: 100%; }
-}
-
-/* =========================
-    AUTOCOMPLETE (UNIFIED)
-========================= */
-.suggest-box,
+/* Autocomplete dropdowns */
+.suggest-wrap{ position:relative; }
 .mod-suggest{
   position:absolute;
-  left:0;
-  right:0;
+  left:0; right:0;
   top: calc(100% + 8px);
-  margin-top: 0;
-
   border-radius:14px;
   border:1px solid rgba(255,255,255,.12);
   background: rgba(10,14,22,.98);
   backdrop-filter: blur(10px);
   box-shadow: var(--shadow);
-
   max-height:240px;
   overflow:auto;
-
   z-index:5000;
   display:none;
-  font-family: var(--sans);
 }
-
-.mod-suggest .item,
-.suggest-box .item{
+.mod-suggest .item{
   padding:10px 12px;
   border-bottom:1px solid rgba(255,255,255,.06);
   cursor:pointer;
   color: rgba(255,255,255,.94);
   font-size: 13.5px;
-  user-select:none;
 }
-.mod-suggest .item:last-child,
-.suggest-box .item:last-child{
-  border-bottom:none;
-}
-.mod-suggest .item:hover,
-.suggest-box .item:hover{
-  background: rgba(79,125,255,.14);
-}
+.mod-suggest .item:last-child{ border-bottom:none; }
+.mod-suggest .item:hover{ background: rgba(79,125,255,.14); }
 
-/* The wrappers must be relative so dropdown anchors correctly */
-.suggest-wrap,
-.input-wrap,
-.select-wrap{
-  position: relative;
+/* Responsive */
+@media (max-width: 1600px){
+  .top3-grid{ grid-template-columns: 1fr; }
 }
-
-/* IMPORTANT:
-   Allow dropdowns to escape containers, but keep your cards clipped normally.
-   We only relax overflow where dropdowns live. */
-.hero-row,
-.subcard,
-.results{
-  overflow: visible;
+@media (max-width: 1180px){
+  .adv-split{ grid-template-columns: 1fr; align-items:start; }
+  .top3-grid{ grid-template-columns: 1fr; }
+}
+@media (max-width: 980px){
+  .grid{ grid-template-columns: 1fr; }
+  .hero-row-3{ grid-template-columns: 1fr; }
+  .hero-row-2{ grid-template-columns: 1fr; }
 }
