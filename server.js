@@ -53,44 +53,6 @@ function stripStarGlyphs(s) {
 
 
 /* =========================
-   Stars parsing fallback (for older/wrong signatures)
-========================= */
-const MASTER_DIGITS = new Map([
-  ["➊", 1], ["➋", 2], ["➌", 3], ["➍", 4], ["➎", 5],
-  ["①", 1], ["②", 2], ["③", 3], ["④", 4], ["⑤", 5],
-]);
-function parseStarsFromName(name) {
-  const s = String(name || "");
-  const base = (s.match(/✪/g) || []).length; // usually 0..5
-  let m = 0;
-  for (const [ch, v] of MASTER_DIGITS.entries()) {
-    if (s.includes(ch)) { m = v; break; }
-  }
-  const total = Math.max(0, Math.min(10, base + m));
-  return total;
-}
-function withSigStars(sig, totalStars10) {
-  const t = Math.max(0, Math.min(10, Number(totalStars10) || 0));
-  if (!t) return String(sig || "");
-  const dst = Math.min(5, t);
-  const mst = Math.max(0, t - 5);
-
-  const parts = String(sig || "").split("|").filter(Boolean);
-  const kept = [];
-  for (const p of parts) {
-    const i = p.indexOf(":");
-    if (i <= 0) continue;
-    const k = p.slice(0, i);
-    if (k === "dstars" || k === "mstars") continue;
-    kept.push(p);
-  }
-  kept.push(`dstars:${dst}`);
-  if (mst > 0) kept.push(`mstars:${mst}`);
-  return kept.join("|");
-}
-
-
-/* =========================
    Signature helpers
 ========================= */
 const RESERVED_SIG_KEYS = new Set([
@@ -447,44 +409,45 @@ function applyVerifiedFiltersOrNull(sig, filters) {
    Strict match quality
 ========================= */
 function strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters }) {
+  if (!sig) return "NONE";
+
+
   const vf = applyVerifiedFiltersOrNull(sig, filters);
   if (!vf.ok) return "NONE";
 
-  // Stars strictness: exact = PERFECT, +/-1 = PARTIAL, >=2 = NONE
-  if (Number(inputStars10) > 0) {
-    if (!sig) return "NONE";
-    const s = sigStars10(sig);
-    const d = Math.abs(Number(s) - Number(inputStars10));
-    if (d >= 2) return "NONE";
-    if (d === 1) return "PARTIAL";
+
+  let anyPartial = false;
+
+
+  const inStars = Number(inputStars10) || 0;
+  if (inStars > 0) {
+    const saStars = sigStars10(sig);
+    const diff = Math.abs(saStars - inStars);
+    if (diff === 1) anyPartial = true;
+    else if (diff >= 2) return "NONE";
   }
 
-  // Enchants strictness:
-  // - missing any requested enchant => NONE
-  // - level diff 0 => OK
-  // - level diff 1 => PARTIAL
-  // - level diff >=2 => NONE
-  if (!userEnchantsMap || userEnchantsMap.size === 0) return "PERFECT";
-  if (!sig) return "NONE";
 
   const saleEnchants = sigEnchantMap(sig);
-  let anyPartial = false;
+
 
   for (const [nameKey, inputLvlRaw] of userEnchantsMap.entries()) {
     const inL = Number(inputLvlRaw);
     if (!Number.isFinite(inL) || inL <= 0) continue;
 
+
     const saleLvl = Number(saleEnchants.get(nameKey) || 0);
     if (!saleLvl) return "NONE";
 
+
     const diff = Math.abs(saleLvl - inL);
-    if (diff >= 2) return "NONE";
     if (diff === 1) anyPartial = true;
+    else if (diff >= 2) return "NONE";
   }
+
 
   return anyPartial ? "PARTIAL" : "PERFECT";
 }
-
 
 
 /* =========================
@@ -552,35 +515,31 @@ function scorePartial({ userEnchantsMap, inputStars10, sig, filters }) {
     const saleLvl = Number(saleEnchants.get(nameKey) || 0);
     if (!saleLvl) continue;
 
-    const diffLvl = Math.abs(saleLvl - inL);
 
-    // diff 0 => full score
-    // diff 1 => partial (purple)
-    // diff >=2 => no score (and no "matched" entry)
-    if (diffLvl === 0) {
-      score += 1.6;
-      matched.push({
-        key: nameKey,
-        input: inL,
-        sale: saleLvl,
-        tier: "AAA",
-        label: displayEnchant(nameKey, inL),
-        add: +1.6,
-      });
-    } else if (diffLvl === 1) {
-      score += 0.8;
-      matched.push({
-        key: nameKey,
-        input: inL,
-        sale: saleLvl,
-        tier: "PARTIAL",
-        label: displayEnchant(nameKey, inL),
-        add: +0.8,
-      });
+    const inTier = tierFor(nameKey, inL);
+    const saTier = tierFor(nameKey, saleLvl);
+    if (!inTier || !saTier) continue;
+
+    const diff = Math.abs(saleLvl - inL);
+
+    let tierLabel = "MISC";
+    let add = 0;
+
+    if (diff === 0) {
+      tierLabel = inTier;
+      add = tierBonusForTier(inTier) + 1.2;
+    } else if (diff === 1) {
+      tierLabel = "PARTIAL";
+      add = 1.0;
     } else {
-      // hard mismatch: slightly penalize so it doesn't float up the top3
-      score -= 0.4;
+      // diff >= 2 => NO SCORE (and don't display a misleading key pill)
+      continue;
     }
+    add *= 1 + Math.min(10, Math.max(0, inL - 1)) * 0.08;
+
+
+    score += add;
+    matched.push({ enchant: { tier: tierLabel, label: displayEnchant(nameKey, inL) }, add });
   }
 
 
@@ -659,14 +618,7 @@ app.get("/api/recommend", async (req, res) => {
       if (!Number.isFinite(price) || price <= 0) continue;
 
 
-      let sig = String(r.signature || "").trim();
-
-      // If signature stars look wrong, fall back to parsing stars from the item name.
-      const nameStars10 = parseStarsFromName(r.item_name);
-      if (nameStars10 > 0 && sig) {
-        const sigS = sigStars10(sig);
-        if (sigS !== nameStars10) sig = withSigStars(sig, nameStars10);
-      }
+      const sig = String(r.signature || "").trim();
 
 
       const q = strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters });
