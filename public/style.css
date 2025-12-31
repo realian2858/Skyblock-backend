@@ -946,3 +946,13 @@ select option{
 
 /* stars numeric display (e.g., 3(2)) */
 .stars-num{ font-weight:600; opacity:.9; }
+
+/* Clear master star glyph */
+.mstar-glyph{
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-shadow: 0 0 6px rgba(168,85,247,0.45);
+  color: #c084fc;
+}
+.sb-stars{ font-weight: 800; }
