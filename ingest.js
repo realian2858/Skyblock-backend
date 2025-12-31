@@ -1,63 +1,47 @@
-// ingest.js (v8 - SAFE NORMALIZATION: no digit stripping, stable keys, consistent signatures)
-//
-// Cloud Run Job: RUN ONCE + EXIT
+// ingest.js (v3 - LBIN-accurate sync)
+// Goals:
+// ✅ Always fetch ALL pages every cycle (full snapshot)
+// ✅ Upsert live auctions fast + safely
+// ✅ Build signature for BIN auctions (and any auction missing sig) so petskins/dyes work
+// ✅ Mark missing-from-snapshot auctions as ended (this is critical for LBIN accuracy)
+// ✅ Finalize ended -> sales in batches
+// ✅ No per-sync “rebuildSalesItemKeys” (that was killing speed + LBIN freshness)
 
 import dotenv from "dotenv";
 import pg from "pg";
 import { canonicalItemKey, buildSignature } from "./parseLore.js";
 
-// ✅ fetch fallback for Node < 18 (safe for Node 18+ too)
-try {
-  if (typeof fetch === "undefined") {
-    const mod = await import("node-fetch");
-    globalThis.fetch = mod.default;
-  }
-} catch {
-  // If fetch is missing AND node-fetch isn't installed, it will error later.
-}
-
 dotenv.config();
 
 const API = "https://api.hypixel.net/skyblock/auctions";
+const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 
 function requireEnv(name) {
   const v = process.env[name];
-  if (!v || !String(v).trim()) throw new Error(`Missing env var: ${name}`);
-  return String(v).trim();
+  if (!v) throw new Error(`Missing env var: ${name}`);
+  return v;
 }
 
-const DATABASE_URL = requireEnv("DATABASE_URL");
 const HYPIXEL_KEY = requireEnv("HYPIXEL_API_KEY");
 
-const PAGE_DELAY_MS = 90;
-const PER_SYNC_GRACE_MS = 60_000;
-
-const FINALIZE_BATCH = 5000;
-const FINALIZE_MAX_LOOPS = 60;
-
-const SALES_KEY_BACKFILL_BATCH = 20000;
-const MAX_PAGES_HARD_CAP = 200;
+// tune these if you want
+const PAGE_DELAY_MS = 90;          // small delay so you don't hammer API
+const PER_SYNC_GRACE_MS = 60_000;  // auctions not seen in this snapshot are ended after grace (1 min)
+const FINALIZE_BATCH = 5000;       // ended->sales batch size
+const FINALIZE_MAX_LOOPS = 60;     // 60 * 5k = 300k max per sync (won't hit normally)
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-const pool = new pg.Pool({
-  connectionString: DATABASE_URL,
-  max: 10,
-  idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 15_000,
-});
-
-pool.on("error", (err) => {
-  console.error("PG pool error:", err?.message || err);
-});
 
 async function fetchJson(url, tries = 4) {
   let lastErr = null;
   for (let i = 0; i < tries; i++) {
     try {
-      const res = await fetch(url, { headers: { accept: "application/json" } });
+      const res = await fetch(url, {
+        headers: { accept: "application/json" },
+      });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return await res.json();
+      const data = await res.json();
+      return data;
     } catch (e) {
       lastErr = e;
       await sleep(250 + i * 350);
@@ -78,76 +62,9 @@ function nonEmptyText(x) {
   return s && s.trim() ? s.trim() : null;
 }
 
-/* =========================
-   Shared normalize helpers (MATCH server)
-========================= */
-
-// Digits mapping (kept)
-const DIGIT_CHAR_MAP = (() => {
-  const map = new Map();
-  const addRange = (startDigit, chars) => {
-    for (let i = 0; i < chars.length; i++) map.set(chars[i], String(startDigit + i));
-  };
-  addRange(0, "⓪①②③④⑤⑥⑦⑧⑨");
-  addRange(0, "０１２３４５６７８９");
-  addRange(1, "➊➋➌➍➎➏➐➑➒➓");
-  addRange(1, "❶❷❸❹❺❻❼❽❾❿");
-  addRange(1, "⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾");
-  addRange(0, "⁰¹²³⁴⁵⁶⁷⁸⁹");
-  addRange(0, "₀₁₂₃₄₅₆₇₈₉");
-  return map;
-})();
-
-function normalizeWeirdDigits(s) {
-  const x = String(s || "").normalize("NFKD");
-  let out = "";
-  for (const ch of x) out += DIGIT_CHAR_MAP.get(ch) ?? ch;
-  return out;
-}
-
-// ✅ Only star/circle glyphs (NO normal digits)
-const STAR_GLYPHS_RE = /[✪★☆✯✰●⬤•○◉◎◍]+/g;
-
-// ✅ Only “special digit glyphs” used for master stars (NO 0-9)
-const MASTER_DIGIT_GLYPHS_RE = /[➊➋➌➍➎➏➐➑➒➓❶❷❸❹❺❻❼❽❾❿⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾①②③④⑤⑥⑦⑧⑨⓪]/g;
-
-// ✅ Remove trailing stars/circles + optional trailing *glyph digit*
-const TRAILING_STARS_AND_MASTER_RE =
-  new RegExp(String.raw`\s*${STAR_GLYPHS_RE.source}\s*(?:${MASTER_DIGIT_GLYPHS_RE.source})?\s*$`);
-
-function stripStarsAndMasterGlyphs(name) {
-  return String(name || "")
-    .replace(/§./g, "") // strip MC formatting codes just in case
-    .replace(TRAILING_STARS_AND_MASTER_RE, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-// ✅ One canonical base-name function used everywhere for keys
-function baseItemName(name) {
-  // normalize weird digits first so signatures don’t drift
-  const s = normalizeWeirdDigits(String(name || ""));
-  return stripStarsAndMasterGlyphs(s);
-}
-
-// normalize itemName for signature parsing (circle-stars -> ✪, weird digits -> ascii)
-function normalizeNameForSignature(itemName) {
-  let s = String(itemName || "");
-  s = s.replace(/§./g, "");
-  s = normalizeWeirdDigits(s);
-  s = s.replace(/[●⬤•○◉◎◍]/g, "✪");
-  s = s.replace(/[★☆✯✰]/g, "✪");
-  return s;
-}
-
-function itemNameLooksStarred(itemName) {
-  const s = String(itemName ?? "");
-  if (!s) return false;
-  if (/[✪★☆✯✰●⬤•○◉◎◍]/.test(s)) return true;
-  if (MASTER_DIGIT_GLYPHS_RE.test(s)) return true;
-  return false;
-}
-
+/**
+ * Build signature BUT NEVER crash sync.
+ */
 async function safeBuildSignature({ itemName, lore, tier, itemBytes }) {
   try {
     const sig = await buildSignature({
@@ -163,12 +80,18 @@ async function safeBuildSignature({ itemName, lore, tier, itemBytes }) {
   }
 }
 
-/* =========================
-   Bulk upsert auctions
-========================= */
+/**
+ * Upsert auctions in a single INSERT .. ON CONFLICT using VALUES bulk.
+ * Much faster than 1 query per auction.
+ *
+ * Notes:
+ * - We compute signature in JS (can’t avoid that), but we only do it when:
+ *   - auction is BIN, OR signature missing in DB (new uuid), OR item has bytes/lore
+ */
 async function upsertAuctionsBulk(list, now) {
   if (!Array.isArray(list) || list.length === 0) return 0;
 
+  // Build rows for bulk insert
   const rows = [];
 
   for (const a of list) {
@@ -176,7 +99,7 @@ async function upsertAuctionsBulk(list, now) {
     if (!uuid) continue;
 
     const itemName = a.item_name || "";
-    const itemKey = canonicalItemKey(baseItemName(itemName)) || null;
+    const itemKey = canonicalItemKey(itemName) || null;
 
     const bin = !!a.bin;
     const start_ts = Number(a.start || 0);
@@ -188,12 +111,12 @@ async function upsertAuctionsBulk(list, now) {
     const lore = nonEmptyText(a.item_lore);
     const bytes = nonEmptyText(a.item_bytes);
 
-    const shouldBuildSig = bin || !!lore || !!bytes || itemNameLooksStarred(itemName);
-
+    // Build signature for BIN auctions (helps your “real LBIN with filters”),
+    // and for anything that has bytes/lore (cheap-ish improvement).
     let sig = null;
-    if (shouldBuildSig) {
+    if (bin || lore || bytes) {
       sig = await safeBuildSignature({
-        itemName: normalizeNameForSignature(itemName),
+        itemName,
         lore: lore || "",
         tier: tier || "",
         itemBytes: bytes || "",
@@ -223,6 +146,7 @@ async function upsertAuctionsBulk(list, now) {
   try {
     await client.query("BEGIN");
 
+    // Build VALUES placeholders
     const values = [];
     const placeholders = [];
     let idx = 1;
@@ -268,21 +192,13 @@ async function upsertAuctionsBulk(list, now) {
         item_bytes   = COALESCE(EXCLUDED.item_bytes, auctions.item_bytes),
         last_seen_ts = EXCLUDED.last_seen_ts,
         is_ended     = false,
+        -- Keep existing signature if present, otherwise fill it
         signature = CASE
-          WHEN EXCLUDED.signature IS NULL OR EXCLUDED.signature = '' THEN auctions.signature
-          WHEN auctions.signature IS NULL OR auctions.signature = '' THEN EXCLUDED.signature
-          WHEN auctions.signature NOT LIKE '%pet_item:%' AND EXCLUDED.signature LIKE '%pet_item:%' THEN EXCLUDED.signature
-          WHEN (
-            (regexp_match(auctions.signature, 'stars10:(\\d+)'))[1] IS NOT NULL
-            AND (regexp_match(EXCLUDED.signature, 'stars10:(\\d+)'))[1] IS NOT NULL
-            AND (regexp_match(auctions.signature, 'stars10:(\\d+)'))[1] <> (regexp_match(EXCLUDED.signature, 'stars10:(\\d+)'))[1]
-          ) THEN EXCLUDED.signature
-          WHEN (
-            (regexp_match(auctions.signature, 'stars10:(\\d+)'))[1] IS NULL
-            AND (regexp_match(EXCLUDED.signature, 'stars10:(\\d+)'))[1] IS NOT NULL
-          ) THEN EXCLUDED.signature
-          ELSE auctions.signature
-        END
+  WHEN auctions.signature IS NULL OR auctions.signature = '' THEN EXCLUDED.signature
+  WHEN auctions.signature NOT LIKE '%pet_item:%' AND EXCLUDED.signature LIKE '%pet_item:%' THEN EXCLUDED.signature
+  ELSE auctions.signature
+END
+
     `;
 
     await client.query(sql, values);
@@ -296,6 +212,11 @@ async function upsertAuctionsBulk(list, now) {
   }
 }
 
+/**
+ * IMPORTANT for LBIN:
+ * If an auction is not seen in the latest full snapshot, it's not live.
+ * We mark it ended so server.js doesn't think it's still active.
+ */
 async function markNotSeenInSnapshotAsEnded(now) {
   await pool.query(
     `
@@ -308,6 +229,10 @@ async function markNotSeenInSnapshotAsEnded(now) {
   );
 }
 
+/**
+ * Move ended auctions -> sales.
+ * Also marks auctions.is_ended = true (kept).
+ */
 async function finalizeEnded(now) {
   const { rows } = await pool.query(
     `
@@ -347,23 +272,12 @@ async function finalizeEnded(now) {
         final_price = EXCLUDED.final_price,
         ended_ts    = EXCLUDED.ended_ts,
         tier        = EXCLUDED.tier,
-        item_lore   = COALESCE(EXCLUDED.item_lore, sales.item_lore),
-        item_bytes  = COALESCE(EXCLUDED.item_bytes, sales.item_bytes),
         signature = CASE
-          WHEN EXCLUDED.signature IS NULL OR EXCLUDED.signature = '' THEN sales.signature
-          WHEN sales.signature IS NULL OR sales.signature = '' THEN EXCLUDED.signature
-          WHEN sales.signature NOT LIKE '%pet_item:%' AND EXCLUDED.signature LIKE '%pet_item:%' THEN EXCLUDED.signature
-          WHEN (
-            (regexp_match(sales.signature, 'stars10:(\\d+)'))[1] IS NOT NULL
-            AND (regexp_match(EXCLUDED.signature, 'stars10:(\\d+)'))[1] IS NOT NULL
-            AND (regexp_match(sales.signature, 'stars10:(\\d+)'))[1] <> (regexp_match(EXCLUDED.signature, 'stars10:(\\d+)'))[1]
-          ) THEN EXCLUDED.signature
-          WHEN (
-            (regexp_match(sales.signature, 'stars10:(\\d+)'))[1] IS NULL
-            AND (regexp_match(EXCLUDED.signature, 'stars10:(\\d+)'))[1] IS NOT NULL
-          ) THEN EXCLUDED.signature
-          ELSE sales.signature
-        END
+  WHEN sales.signature IS NULL OR sales.signature = '' THEN EXCLUDED.signature
+  WHEN sales.signature NOT LIKE '%pet_item:%' AND EXCLUDED.signature LIKE '%pet_item:%' THEN EXCLUDED.signature
+  ELSE sales.signature
+END
+
     `;
 
     const markEndedSql = `UPDATE auctions SET is_ended = true WHERE uuid=$1`;
@@ -372,30 +286,21 @@ async function finalizeEnded(now) {
 
     for (const r of rows) {
       const price = Number(r.bin ? r.starting_bid : r.highest_bid) || 0;
-
-      const fixedKey = r.item_key || canonicalItemKey(baseItemName(r.item_name || "")) || null;
-
-      const shouldBuildSig =
-        !!r.signature ||
-        !!r.item_lore ||
-        !!r.item_bytes ||
-        itemNameLooksStarred(r.item_name || "");
+      const itemKey = r.item_key || canonicalItemKey(r.item_name || "") || null;
 
       const sig =
-        (r.signature && String(r.signature).trim()) ||
-        (shouldBuildSig
-          ? await safeBuildSignature({
-              itemName: normalizeNameForSignature(r.item_name || ""),
-              lore: (r.item_lore || "").toString(),
-              tier: r.tier || "",
-              itemBytes: (r.item_bytes || "").toString(),
-            })
-          : null);
+        r.signature ||
+        (await safeBuildSignature({
+          itemName: r.item_name || "",
+          lore: (r.item_lore || "").toString(),
+          tier: r.tier || "",
+          itemBytes: (r.item_bytes || "").toString(),
+        }));
 
       await client.query(upsertSaleSql, [
         r.uuid,
         r.item_name || "",
-        fixedKey,
+        itemKey,
         !!r.bin,
         price,
         Number(r.end_ts || 0),
@@ -419,7 +324,11 @@ async function finalizeEnded(now) {
   }
 }
 
-async function backfillSalesItemKeys({ batch = SALES_KEY_BACKFILL_BATCH } = {}) {
+/**
+ * Backfill sales.item_key (for autocomplete/recommend stability)
+ * Keep it, but do NOT run giant rebuilds every sync.
+ */
+async function backfillSalesItemKeys({ batch = 20000 } = {}) {
   const client = await pool.connect();
   try {
     const { rows } = await client.query(
@@ -436,15 +345,14 @@ async function backfillSalesItemKeys({ batch = SALES_KEY_BACKFILL_BATCH } = {}) 
 
     await client.query("BEGIN");
     const upd = `UPDATE sales SET item_key = $2 WHERE uuid = $1`;
-
     let updated = 0;
+
     for (const r of rows) {
-      const k = canonicalItemKey(baseItemName(r.item_name || ""));
+      const k = canonicalItemKey(r.item_name || "");
       if (!k) continue;
       await client.query(upd, [r.uuid, k]);
       updated++;
     }
-
     await client.query("COMMIT");
     return updated;
   } catch (e) {
@@ -455,26 +363,36 @@ async function backfillSalesItemKeys({ batch = SALES_KEY_BACKFILL_BATCH } = {}) 
   }
 }
 
-async function syncOnce() {
+/**
+ * Main sync:
+ * - fetch first page -> totalPages
+ * - fetch every page -> upsert auctions
+ * - mark missing-from-snapshot as ended (LBIN correctness)
+ * - finalize ended -> sales
+ */
+export async function syncOnce() {
   const now = Date.now();
 
   const first = await fetchPage(0);
-  let totalPages = Math.max(1, Number(first.totalPages || 1));
-  totalPages = Math.min(totalPages, MAX_PAGES_HARD_CAP);
-
+  const totalPages = Math.max(1, Number(first.totalPages || 1));
   console.log(`📦 Sync: ${totalPages} pages`);
 
   let upserted = 0;
+
+  // upsert page 0
   upserted += await upsertAuctionsBulk(first.auctions || [], now);
 
+  // upsert remaining pages
   for (let p = 1; p < totalPages; p++) {
     const data = await fetchPage(p);
     upserted += await upsertAuctionsBulk(data.auctions || [], now);
     if (PAGE_DELAY_MS > 0) await sleep(PAGE_DELAY_MS);
   }
 
+  // 🔥 KEY LBIN FIX: end auctions that weren't seen in this full snapshot
   await markNotSeenInSnapshotAsEnded(now);
 
+  // finalize ended -> sales
   let totalFinalized = 0;
   for (let i = 0; i < FINALIZE_MAX_LOOPS; i++) {
     const n = await finalizeEnded(now);
@@ -483,30 +401,39 @@ async function syncOnce() {
     await sleep(30);
   }
 
-  const filled = await backfillSalesItemKeys({ batch: SALES_KEY_BACKFILL_BATCH });
+  // light maintenance
+  const filled = await backfillSalesItemKeys({ batch: 20000 });
   if (filled > 0) console.log(`🧩 Backfilled sales.item_key: ${filled}`);
 
   console.log(`✅ Upserted live: ${upserted} | Finalized sales: ${totalFinalized}`);
 }
 
-async function main() {
-  console.log("🚀 INGEST BOOT", new Date().toISOString());
-  console.log("ENV OK:", {
-    hasDatabaseUrl: !!process.env.DATABASE_URL,
-    hasHypixelKey: !!process.env.HYPIXEL_API_KEY,
-  });
+/**
+ * Optional manual rebuild tool (run once from a script, NOT inside syncOnce)
+ */
+export async function rebuildAllSalesItemKeys(batch = 50000) {
+  const client = await pool.connect();
+  try {
+    let offset = 0;
+    while (true) {
+      const { rows } = await client.query(
+        `SELECT uuid, item_name FROM sales ORDER BY ended_ts DESC LIMIT $1 OFFSET $2`,
+        [batch, offset]
+      );
+      if (!rows.length) break;
 
-  await syncOnce();
-  console.log("✅ INGEST DONE", new Date().toISOString());
+      await client.query("BEGIN");
+      for (const r of rows) {
+        const k = canonicalItemKey(r.item_name || "");
+        await client.query(`UPDATE sales SET item_key=$2 WHERE uuid=$1`, [r.uuid, k]);
+      }
+      await client.query("COMMIT");
+
+      offset += rows.length;
+      console.log("rebuilt", offset);
+    }
+  } finally {
+    client.release();
+  }
 }
 
-main()
-  .then(async () => {
-    try { await pool.end(); } catch {}
-    process.exit(0);
-  })
-  .catch(async (e) => {
-    console.error("❌ INGEST FAILED", e?.stack || e);
-    try { await pool.end(); } catch {}
-    process.exit(1);
-  });
