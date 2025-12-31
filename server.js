@@ -792,99 +792,6 @@ app.get("/api/recommend", async (req, res) => {
   }
 });
 
-
-    /* =========================
-       LIVE BIN (LBIN)
-    ========================= */
-    const { rows: liveRows } = await pool.query(
-      `
-      SELECT uuid, item_name, item_key, bin, start_ts, end_ts, starting_bid,
-             tier, signature, item_lore, item_bytes, last_seen_ts
-      FROM auctions
-      WHERE is_ended = false
-        AND bin = true
-        AND (item_key ILIKE ('%' || $1 || '%') OR item_name ILIKE ('%' || $1 || '%'))
-        AND last_seen_ts >= $2
-      ORDER BY starting_bid ASC
-      LIMIT 3000
-      `,
-      [itemKey, now - 10 * 60 * 1000]
-    );
-
-    let bestPerfect = null;
-    let bestPartial = null;
-
-    for (const a of liveRows) {
-      const price = Number(a.starting_bid || 0);
-      if (!Number.isFinite(price) || price <= 0) continue;
-      const aKey = canonicalItemKey(a.item_key || a.item_name || "");
-      if (aKey !== itemKey) continue;
-
-      let sig = String(a.signature || "").trim();
-      if (!sig) {
-        sig = String(
-          (await buildSignature({
-            itemName: a.item_name || "",
-            lore: a.item_lore || "",
-            tier: a.tier || "",
-            itemBytes: a.item_bytes || "",
-          })) || ""
-        ).trim();
-      }
-
-      // LBIN fallback: allow star-based matching even when bytes/lore are missing
-      if (!sig) sig = buildLbinFallbackSignature({ itemName: a.item_name || "", tier: a.tier || "" });
-
-      const q = strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters });
-      if (q === "NONE") continue;
-
-      const sc = scoreAfterStrict({ userEnchantsMap, inputStars10, sig, filters });
-      if (!sc) continue;
-
-      const cand = {
-        uuid: a.uuid,
-        item_name: stripStarGlyphs(a.item_name),
-        price,
-        bin: true,
-        signature: sig,
-        dstars: sigDungeonStars(sig),
-        mstars: sigMasterStars(sig),
-        stars10: sigStars10(sig),
-        petItem: sigPetItem(sig),
-        score: sc.score,
-        matched: sc.matched,
-        quality: q,
-      };
-
-      if (q === "PERFECT") {
-        if (!bestPerfect || cand.price < bestPerfect.price) bestPerfect = cand;
-      } else {
-        if (!bestPartial || cand.price < bestPartial.price) bestPartial = cand;
-      }
-    }
-
-    const liveBest = bestPerfect || bestPartial || null;
-
-    const note = candidates.length
-      ? null
-      : "No sales found that match (diff>=2 is excluded) within the selected history window.";
-
-    return res.json({
-      recommended: med,
-      median: med,
-      range_low: rangeLow,
-      range_high: rangeHigh,
-      range_count: pricePool.length,
-      count: candidates.length,
-      note,
-      top3,
-      live: liveBest,
-    });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
-});
-
 /* =========================
    /api/items (DEDUPED + match anywhere)
 ========================= */
@@ -999,6 +906,7 @@ const PORT = Number(process.env.PORT || 8080);
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
+
 
 
 
