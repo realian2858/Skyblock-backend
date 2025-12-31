@@ -656,10 +656,40 @@ app.get("/api/recommend", async (req, res) => {
     candidates.sort((a, b) => (b.score - a.score) || (a.final_price - b.final_price));
     const top3 = candidates.slice(0, 3);
 
-    const pricePool = perfectPrices.length ? perfectPrices : partialPrices;
-    const med = pricePool.length ? median(pricePool) : null;
-    const rangeLow = pricePool.length ? Math.min(...pricePool) : null;
-    const rangeHigh = pricePool.length ? Math.max(...pricePool) : null;
+    // change ONLY this block inside /api/recommend (after candidates/top3 are computed)
+
+/* =========================
+   Recommended price (TOP 10 ALWAYS)
+========================= */
+const top10 = candidates.slice(0, 10);
+
+const top10Perfect = top10
+  .filter((x) => x.quality === "PERFECT")
+  .map((x) => x.final_price);
+
+const top10Partial = top10
+  .filter((x) => x.quality === "PARTIAL")
+  .map((x) => x.final_price);
+
+const pricePool = top10Perfect.length ? top10Perfect : top10Partial;
+
+const med = pricePool.length ? median(pricePool) : null;
+const rangeLow = pricePool.length ? Math.min(...pricePool) : null;
+const rangeHigh = pricePool.length ? Math.max(...pricePool) : null;
+
+// keep response fields the same:
+return res.json({
+  recommended: med,
+  median: med,
+  range_low: rangeLow,
+  range_high: rangeHigh,
+  range_count: pricePool.length, // will now be <= 10 always
+  count: candidates.length,
+  note,
+  top3,
+  live: liveBest,
+});
+
 
     /* =========================
        LIVE BIN (LBIN)
@@ -867,3 +897,4 @@ const PORT = Number(process.env.PORT || 8080);
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
+
