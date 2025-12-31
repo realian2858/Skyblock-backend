@@ -756,7 +756,7 @@ export async function buildSignature({ itemName = "", lore = "", tier = "", item
   // Stars: prefer parsing from the visible itemName when present.
   // This avoids false-positive master stars from inconsistent NBT fields.
   const nameStars = parseStarsFromName(itemName);
-  const extraStars = extractStars(extra);
+  const extraStars = extractStars(extra, itemName);
   const dstars = nameStars ? nameStars.dstars : extraStars.dstars;
   const mstars = nameStars ? nameStars.mstars : extraStars.mstars;
   const hasWI = extractWitherImpactFlag(itemName, rootParsed);
@@ -790,4 +790,5 @@ export async function buildSignature({ itemName = "", lore = "", tier = "", item
 
   return [...parts, ...enchTokens].join("|");
 }
+
 
