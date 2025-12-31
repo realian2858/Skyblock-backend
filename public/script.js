@@ -1,4 +1,12 @@
-// public/script.js (v9 - FIX: advBtn wired + comment fixed + UUID copy works)
+\
+// public/script.js (FULL REWRITE v3)
+// Changes in this rewrite:
+// ✅ Stars display: ALWAYS shows 5 ✪ icons when starred, plus master-star number (if any)
+// ✅ Removed Live Signature (Perfect Match) support entirely
+// ✅ Added Pet Item (optional) local autocomplete using PET_ITEM_LIST
+// ✅ Keeps PARTIAL tier tag as data-tier="PARTIAL" for purple styling
+// ✅ Autocomplete dedupe + abort handling kept
+// ✅ WI toggle only shows for Wither Blades
 
 function $(id) { return document.getElementById(id); }
 
@@ -6,53 +14,67 @@ function $(id) { return document.getElementById(id); }
    Constants
 ========================= */
 const PET_ITEM_LIST = [
-  "All Skills Exp Boost","All Skills Exp Super-Boost","Antique Remedies","Bejeweled Collar","Big Teeth","Bigger Teeth",
-  "Bingo Booster","Brown Bandana","Bubblegum","Burnt Texts","Combat Exp Boost","Cretan Urn","Crochet Tiger Plushie",
-  "Dead Cat Food","Dwarf Turtle Shelmet","Edible Seaweed","Eerie Toy","Eerie Treat","Exp Share","Exp Share Core",
-  "Fake Neuroscience Degree","Farming Exp Boost","Fishing Exp Boost","Flying Pig","Foraging Exp Boost","Four-Eyed Fish",
-  "Frog Treat","Gold Claws","Grandma's Knitting Needle","Green Bandana","Guardian Lucky Claw","Hardened Scales",
-  "Hephaestus Plushie","Hephaestus Relic","Hephaestus Remedies","Hephaestus Shelmet","Hephaestus Souvenir",
-  "Hephaestus Urn","Iron Claws","Jerry 3D Glasses","Lucky Clover","Mining Exp Boost","Minos Relic","Party Hat",
-  "Quick Claw","Radioactive Vial","Reaper Gem","Reinforced Scales","Saddle","Serrated Claws","Sharpened Claws",
-  "Simple Carrot Candy","Spooky Cupcake","Textbook","Tier Boost","Tier Boost Core","Titanium Minecart","Vampire Fang",
-  "Washed-up Souvenir","Yellow Bandana",
+  "All Skills Exp Boost",
+  "All Skills Exp Super-Boost",
+  "Antique Remedies",
+  "Bejeweled Collar",
+  "Big Teeth",
+  "Bigger Teeth",
+  "Bingo Booster",
+  "Brown Bandana",
+  "Bubblegum",
+  "Burnt Texts",
+  "Combat Exp Boost",
+  "Cretan Urn",
+  "Crochet Tiger Plushie",
+  "Dead Cat Food",
+  "Dwarf Turtle Shelmet",
+  "Edible Seaweed",
+  "Eerie Toy",
+  "Eerie Treat",
+  "Exp Share",
+  "Exp Share Core",
+  "Fake Neuroscience Degree",
+  "Farming Exp Boost",
+  "Fishing Exp Boost",
+  "Flying Pig",
+  "Foraging Exp Boost",
+  "Four-Eyed Fish",
+  "Frog Treat",
+  "Gold Claws",
+  "Grandma's Knitting Needle",
+  "Green Bandana",
+  "Guardian Lucky Claw",
+  "Hardened Scales",
+  "Hephaestus Plushie",
+  "Hephaestus Relic",
+  "Hephaestus Remedies",
+  "Hephaestus Shelmet",
+  "Hephaestus Souvenir",
+  "Hephaestus Urn",
+  "Iron Claws",
+  "Jerry 3D Glasses",
+  "Lucky Clover",
+  "Mining Exp Boost",
+  "Minos Relic",
+  "Party Hat",
+  "Quick Claw",
+  "Radioactive Vial",
+  "Reaper Gem",
+  "Reinforced Scales",
+  "Saddle",
+  "Serrated Claws",
+  "Sharpened Claws",
+  "Simple Carrot Candy",
+  "Spooky Cupcake",
+  "Textbook",
+  "Tier Boost",
+  "Tier Boost Core",
+  "Titanium Minecart",
+  "Vampire Fang",
+  "Washed-up Souvenir",
+  "Yellow Bandana",
 ];
-
-/* =========================
-   Diagnostics
-========================= */
-const AUTO_DEBUG = true;
-function dbg(...args) { if (AUTO_DEBUG) console.log("[auto]", ...args); }
-function warn(...args) { console.warn("[auto]", ...args); }
-
-// Safe JSON fetch that never throws on HTML error pages
-async function safeFetchJson(url, opts) {
-  let res;
-  try {
-    res = await fetch(url, { cache: "no-store", ...opts });
-  } catch (e) {
-    warn("Fetch failed:", url, e?.message || e);
-    return { ok: false, status: 0, data: null };
-  }
-
-  let text = "";
-  try { text = await res.text(); } catch { return { ok: res.ok, status: res.status, data: null }; }
-
-  let data = null;
-  try { data = text ? JSON.parse(text) : null; }
-  catch {
-    if (!res.ok) warn("Non-JSON error response:", url, "status", res.status, "body_head", text.slice(0, 120));
-    return { ok: res.ok, status: res.status, data: null };
-  }
-
-  if (!res.ok) warn("Bad response:", url, "status", res.status, data);
-  return { ok: res.ok, status: res.status, data };
-}
-
-function assertIdsExist(ids) {
-  const missing = ids.filter((id) => !$(id));
-  if (missing.length) warn("Missing DOM ids (autocomplete won't attach):", missing);
-}
 
 /* =========================
    Utils
@@ -68,10 +90,12 @@ function parseCoins(input) {
   if (suffix && multipliers[suffix]) value *= multipliers[suffix];
   return Math.round(value);
 }
+
 function formatCoins(n) {
   if (!isFinite(n)) return "—";
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(n) + " coins";
 }
+
 function formatShort(n) {
   const x = Number(n);
   if (!isFinite(x)) return "—";
@@ -82,6 +106,7 @@ function formatShort(n) {
   if (abs >= 1e3)  return (x / 1e3).toFixed(2).replace(/\.00$/, "") + "k";
   return String(Math.round(x));
 }
+
 function escapeHtml(s) {
   return String(s ?? "")
     .replace(/&/g, "&amp;")
@@ -90,6 +115,7 @@ function escapeHtml(s) {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 }
+
 function normalizeTextForDedupe(s) {
   return String(s || "")
     .toLowerCase()
@@ -97,9 +123,12 @@ function normalizeTextForDedupe(s) {
     .replace(/\s+/g, " ")
     .trim();
 }
+
 function toKeyFromLabel(label) {
+  // used for local lists; server expects snake-ish keys in some places
   return String(label || "").trim().toLowerCase().replace(/\s+/g, "_");
 }
+
 function prettyFromKey(k) {
   const x = String(k || "").trim();
   if (!x || x === "none" || x === "null") return "None";
@@ -112,97 +141,50 @@ function prettyFromKey(k) {
 }
 
 /* =========================
-   Stars / Name sanitizing
-========================= */
-const STAR_ICON_RE = /[✪✦★☆✯✰✫✬✭✮●⬤○◉◎◍]/g;
-const CIRCLE_ICON_RE = /[●○◉◎◍]/g;
-const MASTER_DINGBAT_RE = /[➊➋➌➍➎]/g;
-const DINGBAT_TO_NUM = { "➊":1, "➋":2, "➌":3, "➍":4, "➎":5 };
-const TRAILING_STARS_RE = /\s*[✪✦★☆✯✰✫✬✭✮●○◉◎◍]+\s*[➊➋➌➍➎]?\s*$/;
-
-function stripStarsFromName(name) {
-  return String(name || "").replace(TRAILING_STARS_RE, "").trim();
-}
-function parseStarsFromName(name) {
-  const s = String(name || "");
-  const starCount = (s.match(STAR_ICON_RE) || []).length;
-  const circleCount = (s.match(CIRCLE_ICON_RE) || []).length;
-  const shown = Math.max(starCount, circleCount);
-
-  const ding = (s.match(MASTER_DINGBAT_RE) || [])[0];
-  const master = ding ? (DINGBAT_TO_NUM[ding] || 0) : 0;
-
-  if (shown >= 5 && master > 0) return Math.min(10, 5 + master);
-  if (shown > 0) return Math.min(10, shown);
-  return 0;
-}
-
-/* =========================
    Wither Impact visibility
 ========================= */
-function normItemKey(s) {
-  return String(s || "")
-    .toLowerCase()
-    .replace(/§./g, "")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
+function isWitherBladeKey(itemKeyOrLabel) {
+  const k = String(itemKeyOrLabel || "").trim().toLowerCase();
+  return k === "hyperion" || k === "scylla" || k === "valkyrie" || k === "astraea";
 }
-function isWitherBlade(itemKeyOrLabel) {
-  const k = normItemKey(stripStarsFromName(itemKeyOrLabel));
-  return k.includes("hyperion") || k.includes("scylla") || k.includes("valkyrie") || k.includes("astraea");
-}
+
 function updateWIVisibility() {
   const itemEl = $("advItem");
-  const wiRow = $("wiRow");
   const wiEl = $("advWI");
-  if (!itemEl || !wiRow || !wiEl) return;
+  if (!itemEl || !wiEl) return;
 
-  const raw = (itemEl.dataset.key || itemEl.value || "").trim();
-  const show = isWitherBlade(raw);
+  const row = wiEl.closest(".toggle-row") || wiEl.closest(".field") || wiEl.parentElement;
+  const key = (itemEl.dataset.key || itemEl.value || "").trim();
+  const show = isWitherBladeKey(key);
 
-  wiRow.style.display = show ? "" : "none";
+  if (row) row.style.display = show ? "" : "none";
+  else wiEl.style.display = show ? "" : "none";
+
   if (!show) wiEl.checked = false;
 }
 
 /* =========================
    Stars rendering
+   - ALWAYS show 5 icons when starred
+   - show master-star number if >0
 ========================= */
 function clampInt(n, lo, hi) {
   const x = Math.trunc(Number(n) || 0);
   if (!Number.isFinite(x)) return lo;
   return Math.max(lo, Math.min(hi, x));
 }
-const MS_DINGBAT = { 1: "➊", 2: "➋", 3: "➌", 4: "➍", 5: "➎" };
 
-function computeStars10({ stars10, dstars, mstars }) {
-  const s10 = clampInt(stars10, 0, 10);
-  if (s10 > 0) return s10;
+function renderStarsHtml(dungeonStars, masterStars) {
+  const ds = clampInt(dungeonStars, 0, 5);
+  const ms = clampInt(masterStars, 0, 5);
 
-  const ds = clampInt(dstars, 0, 5);
-  const ms = clampInt(mstars, 0, 5);
-  const sum = clampInt(ds + ms, 0, 10);
-  if (sum > 0) return sum;
+  if (ds <= 0 && ms <= 0) return "";
 
-  return 0;
+  const icons = ds > 0 ? "✪".repeat(ds) : "";
+  const m = ms > 0 ? `<span class="mstar-num">(${ms})</span>` : "";
+  return `<span class="sb-stars">${escapeHtml(icons)}</span>${m ? " " + m : ""}`;
 }
-function renderStarsHtml10(stars10) {
-  const s10 = clampInt(stars10, 0, 10);
-  if (s10 <= 0) return "";
 
-  const icons = "✪".repeat(5);
-  const master = s10 > 5 ? clampInt(s10 - 5, 1, 5) : 0;
-  const digit = master ? (MS_DINGBAT[master] || String(master)) : "";
-
-  return `
-    <span class="sb-stars" aria-label="${s10} stars">
-      ${escapeHtml(icons)}${digit ? `<span class="mstar-d">${escapeHtml(digit)}</span>` : ""}
-    </span>
-  `.trim();
-}
-function renderStarsHtmlFromObj(obj) {
-  const s10 = computeStars10(obj || {});
-  return renderStarsHtml10(s10);
-}
 
 /* =========================
    Enchant rendering
@@ -212,10 +194,12 @@ function normalizeTier(t) {
   if (["AAA", "AA", "A", "B", "BB", "PARTIAL"].includes(u)) return u;
   return "MISC-A";
 }
+
 function tierLabel(tier) {
   const t = normalizeTier(tier);
   return t === "PARTIAL" ? "PARTIAL" : t;
 }
+
 function parseEnchantAny(raw) {
   if (raw == null) return { tier: "MISC-A", label: "—" };
   if (typeof raw === "object") {
@@ -227,10 +211,12 @@ function parseEnchantAny(raw) {
   if (!s) return { tier: "MISC-A", label: "—" };
   return { tier: "MISC-A", label: s };
 }
+
 function enchantTagHtml(tier) {
   const t = normalizeTier(tier);
   return `<span class="ench-tag" data-tier="${escapeHtml(t)}">${escapeHtml(tierLabel(t))}</span>`;
 }
+
 function enchantLineHtml(raw) {
   const { tier, label } = parseEnchantAny(raw);
   return `
@@ -240,6 +226,7 @@ function enchantLineHtml(raw) {
     </div>
   `.trim();
 }
+
 function enchantInlineHtml(raw) {
   const { tier, label } = parseEnchantAny(raw);
   return `${enchantTagHtml(tier)} <span class="ench-text">${escapeHtml(label)}</span>`;
@@ -276,11 +263,13 @@ async function copyTextToClipboard(text) {
     return false;
   }
 }
+
 function uuidButtonHtml(uuid) {
   const u = String(uuid || "").trim();
   if (!u) return "";
   return `<button type="button" class="uuid-copy-btn" data-uuid="${escapeHtml(u)}" title="Copy UUID">UUID</button>`;
 }
+
 function setUuidBtnState(btn, label, ok) {
   btn.textContent = label;
   btn.classList.toggle("uuid-ok", !!ok);
@@ -311,7 +300,87 @@ function setView(view) {
   });
 
   if (activeLabel) activeLabel.textContent = isBasics ? "Basics" : "Advanced";
-  if (!isBasics) updateWIVisibility();
+}
+
+/* =========================
+   Basics calculators
+========================= */
+function calculateTaxAndProfit(sellPrice) {
+  let taxRate = 0.01;
+  if (sellPrice < 10_000_000) taxRate = 0.01;
+  else if (sellPrice < 100_000_000) taxRate = 0.02;
+  else taxRate = 0.025;
+
+  const auctionTax = Math.round(sellPrice * taxRate);
+  const afterTax = sellPrice - auctionTax;
+  const collectionFee = Math.round(afterTax * 0.01);
+  const finalProfit = afterTax - collectionFee;
+  return { taxRate, auctionTax, afterTax, collectionFee, finalProfit };
+}
+
+function calculateProfit(purchasePrice, sellPrice) {
+  const { finalProfit } = calculateTaxAndProfit(sellPrice);
+  return finalProfit - purchasePrice;
+}
+
+function calculateBreakEven(purchasePrice) {
+  let low = purchasePrice;
+  let high = purchasePrice * 2;
+  let mid = purchasePrice;
+
+  for (let i = 0; i < 80; i++) {
+    mid = Math.floor((low + high) / 2);
+    const profit = calculateProfit(purchasePrice, mid);
+    if (Math.abs(profit) <= 1) break;
+    if (profit < 0) low = mid + 1;
+    else high = mid - 1;
+  }
+  return mid;
+}
+
+function runCalculator() {
+  const sellEl = $("sellPrice");
+  const outTax = $("taxResult");
+  const outProfit = $("profitResult");
+  if (!sellEl || !outTax || !outProfit) return;
+
+  const coinAmount = parseCoins(sellEl.value);
+  if (!isFinite(coinAmount) || coinAmount <= 0) {
+    outTax.innerText = "Enter a valid amount (e.g. 1m, 1.5m, 1200000).";
+    outProfit.innerText = "";
+    return;
+  }
+  const { taxRate, auctionTax, finalProfit } = calculateTaxAndProfit(coinAmount);
+  outTax.innerText = `Auction Tax (${(taxRate * 100).toFixed(2)}%): ${formatCoins(auctionTax)}`;
+  outProfit.innerText = `Take-home (after 1% collection fee): ${formatCoins(finalProfit)}`;
+}
+
+function runLowballCalculator() {
+  const purchaseEl = $("purchasePrice");
+  const sellEl = $("sellPriceLow");
+  const output = $("lowballProfitResult");
+  const breakEvenOutput = $("breakEvenResult");
+  if (!purchaseEl || !sellEl || !output || !breakEvenOutput) return;
+
+  const purchasePrice = parseCoins(purchaseEl.value);
+  const sellPrice = parseCoins(sellEl.value);
+
+  if (!isFinite(purchasePrice) || purchasePrice <= 0) {
+    output.innerText = "Enter a valid purchase price.";
+    breakEvenOutput.innerText = "—";
+    return;
+  }
+  if (!isFinite(sellPrice) || sellPrice <= 0) {
+    output.innerText = "Enter a valid sell price.";
+    breakEvenOutput.innerText = "—";
+    return;
+  }
+
+  const totalProfit = calculateProfit(purchasePrice, sellPrice);
+  const breakEvenPrice = calculateBreakEven(purchasePrice);
+
+  output.innerText = `Final Profit: ${formatCoins(totalProfit)}`;
+  breakEvenOutput.innerText = `${formatCoins(breakEvenPrice)}`;
 }
 
 /* =========================
@@ -335,12 +404,8 @@ function setupStars10Slider() {
 function setupAutocomplete({ inputId, boxId, endpoint, limit = 30, onPick }) {
   const input = $(inputId);
   const box = $(boxId);
-  if (!input || !box) {
-    warn("Autocomplete attach failed:", { inputId, boxId, endpoint }, "missing:", { input: !!input, box: !!box });
-    return;
-  }
+  if (!input || !box) return;
 
-  box.style.zIndex = "5000";
   let timer = null;
   let controller = null;
   let reqSeq = 0;
@@ -362,7 +427,7 @@ function setupAutocomplete({ inputId, boxId, endpoint, limit = 30, onPick }) {
       const key = String(toKey(it) || "").trim();
       if (!label && !key) continue;
 
-      const dedupeKey = (stripStarsFromName(key || label)).toLowerCase() || normalizeTextForDedupe(label);
+      const dedupeKey = key ? key.toLowerCase() : normalizeTextForDedupe(label);
       if (!dedupeKey) continue;
 
       if (seen.has(dedupeKey)) continue;
@@ -378,17 +443,14 @@ function setupAutocomplete({ inputId, boxId, endpoint, limit = 30, onPick }) {
     for (const it of cleaned) {
       const div = document.createElement("div");
       div.className = "item";
-      div.dataset.label = String(toLabel(it) || "");
-      div.dataset.key = String(toKey(it) || "");
-      div.textContent = stripStarsFromName(toLabel(it));
+      div.dataset.label = toLabel(it);
+      div.dataset.key = toKey(it);
+      div.textContent = toLabel(it);
       box.appendChild(div);
     }
   }
 
-  input.addEventListener("keydown", (e) => {
-    if (e.key.length === 1 || e.key === "Backspace" || e.key === "Delete") input.dataset.key = "";
-    if (e.key === "Escape") hide();
-  });
+  input.addEventListener("keydown", () => { input.dataset.key = ""; });
 
   input.addEventListener("input", () => {
     clearTimeout(timer);
@@ -400,17 +462,17 @@ function setupAutocomplete({ inputId, boxId, endpoint, limit = 30, onPick }) {
       controller = new AbortController();
       const mySeq = ++reqSeq;
 
-      const url = `${endpoint}?q=${encodeURIComponent(q)}&limit=${limit}`;
-      const { ok, status, data } = await safeFetchJson(url, { signal: controller.signal });
-
-      if (mySeq !== reqSeq) return;
-
-      if (!ok) {
-        warn("Autocomplete endpoint failed:", endpoint, "status", status, "q", q);
-        return hide();
+      try {
+        const res = await fetch(`${endpoint}?q=${encodeURIComponent(q)}&limit=${limit}`, {
+          signal: controller.signal,
+          cache: "no-store",
+        });
+        const data = await res.json().catch(() => ({}));
+        if (mySeq !== reqSeq) return;
+        render(data.items || []);
+      } catch {
+        if (mySeq === reqSeq) hide();
       }
-
-      render(data?.items || []);
     }, 90);
   });
 
@@ -418,24 +480,17 @@ function setupAutocomplete({ inputId, boxId, endpoint, limit = 30, onPick }) {
     const el = e.target.closest(".item");
     if (!el) return;
     e.preventDefault();
-
-    const labelClean = stripStarsFromName(el.dataset.label || "");
-    const keyClean   = stripStarsFromName(el.dataset.key || el.dataset.label || "");
-
-    input.value = labelClean;
-    input.dataset.key = keyClean;
-
+    input.value = el.dataset.label || "";
+    input.dataset.key = el.dataset.key || "";
     hide();
     input.focus();
-    onPick?.(input.dataset.key || input.value || "");
+    onPick?.(input.dataset.key || "");
   });
 
   document.addEventListener("click", (e) => {
     if (e.target === input || box.contains(e.target)) return;
     hide();
-  }, true);
-
-  dbg("Autocomplete attached:", { inputId, boxId, endpoint });
+  });
 }
 
 function setupItemAutocomplete() {
@@ -454,12 +509,8 @@ function setupItemAutocomplete() {
 function setupLocalAutocomplete({ inputId, boxId, list, limit = 30, onPick }) {
   const input = $(inputId);
   const box = $(boxId);
-  if (!input || !box) {
-    warn("Local autocomplete attach failed:", { inputId, boxId });
-    return;
-  }
+  if (!input || !box) return;
 
-  box.style.zIndex = "5000";
   let timer = null;
 
   function hide() { box.style.display = "none"; box.innerHTML = ""; }
@@ -478,10 +529,7 @@ function setupLocalAutocomplete({ inputId, boxId, list, limit = 30, onPick }) {
     }
   }
 
-  input.addEventListener("keydown", (e) => {
-    if (e.key.length === 1 || e.key === "Backspace" || e.key === "Delete") input.dataset.key = "";
-    if (e.key === "Escape") hide();
-  });
+  input.addEventListener("keydown", () => { input.dataset.key = ""; });
 
   input.addEventListener("input", () => {
     clearTimeout(timer);
@@ -512,9 +560,7 @@ function setupLocalAutocomplete({ inputId, boxId, list, limit = 30, onPick }) {
   document.addEventListener("click", (e) => {
     if (e.target === input || box.contains(e.target)) return;
     hide();
-  }, true);
-
-  dbg("Local autocomplete attached:", { inputId, boxId });
+  });
 }
 
 /* =========================
@@ -523,16 +569,9 @@ function setupLocalAutocomplete({ inputId, boxId, list, limit = 30, onPick }) {
 function setupEnchantAutocomplete() {
   const input = $("advEnchants");
   const box = $("enchSuggest");
-  if (!input || !box) {
-    warn("Enchant autocomplete attach failed:", { input: !!input, box: !!box });
-    return;
-  }
-
-  box.style.zIndex = "5000";
+  if (!input || !box) return;
 
   let timer = null;
-  let controller = null;
-  let seq = 0;
 
   function currentSegmentInfo() {
     const raw = input.value || "";
@@ -556,10 +595,6 @@ function setupEnchantAutocomplete() {
     }
   }
 
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") hide();
-  });
-
   input.addEventListener("input", () => {
     clearTimeout(timer);
     const { seg } = currentSegmentInfo();
@@ -567,21 +602,11 @@ function setupEnchantAutocomplete() {
     if (!q) return hide();
 
     timer = setTimeout(async () => {
-      if (controller) controller.abort();
-      controller = new AbortController();
-      const my = ++seq;
-
-      const url = `/api/enchants?q=${encodeURIComponent(q)}&limit=30`;
-      const { ok, status, data } = await safeFetchJson(url, { signal: controller.signal });
-
-      if (my !== seq) return;
-
-      if (!ok) {
-        warn("Enchant endpoint failed:", status, q);
-        return hide();
-      }
-
-      render(data?.items || []);
+      try {
+        const res = await fetch(`/api/enchants?q=${encodeURIComponent(q)}&limit=30`, { cache: "no-store" });
+        const data = await res.json().catch(() => ({}));
+        render(data.items || []);
+      } catch { hide(); }
     }, 70);
   });
 
@@ -599,19 +624,29 @@ function setupEnchantAutocomplete() {
   document.addEventListener("click", (e) => {
     if (e.target === input || box.contains(e.target)) return;
     hide();
-  }, true);
-
-  dbg("Enchant autocomplete attached");
+  });
 }
 
 /* =========================
-   Recommend API call + render
+   Recommend API call (NO liveSignature)
 ========================= */
-async function fetchRecommended({ item, stars10, enchants, wi, rarity, dye, skin, petlvl, petskin, petitem }) {
+async function fetchRecommended({
+  item,
+  stars10,
+  enchants,
+  wi,
+  rarity,
+  dye,
+  skin,
+  petlvl,
+  petskin,
+  petitem,
+}) {
   const params = new URLSearchParams();
   params.set("item", item);
   params.set("stars10", String(stars10 || 0));
   params.set("enchants", enchants || "");
+
   if (wi) params.set("wi", "1");
   if (rarity) params.set("rarity", rarity);
   if (dye) params.set("dye", dye);
@@ -627,7 +662,7 @@ async function fetchRecommended({ item, stars10, enchants, wi, rarity, dye, skin
 }
 
 /* =========================
-   Advanced render
+   Render Top 3 rail
 ========================= */
 function renderTop3Rail(top3) {
   const rail = $("top3Rail");
@@ -644,15 +679,11 @@ function renderTop3Rail(top3) {
   }
 
   rail.innerHTML = top3.slice(0, 3).map((m, idx) => {
-    const rawName = String(m.item_name ?? "—");
-    const cleanName = stripStarsFromName(rawName);
-    const derivedStars10 = parseStarsFromName(rawName);
+    const name = escapeHtml(m.item_name ?? "—");
 
-    const starsHtml = renderStarsHtmlFromObj({
-      stars10: m.stars10 ?? derivedStars10,
-      dstars: m.dstars ?? m.dungeonStars,
-      mstars: m.mstars ?? m.masterStars,
-    });
+    const ds = Number(m.dstars ?? m.dungeonStars ?? 0);
+    const ms = Number(m.mstars ?? m.masterStars ?? 0);
+    const starsHtml = renderStarsHtml(ds, ms);
 
     const price = formatCoins(Number(m.final_price));
     const score = escapeHtml(String(Math.round(m.score ?? 0)));
@@ -697,7 +728,7 @@ function renderTop3Rail(top3) {
       <div class="mini-card">
         <div class="mini-head">
           <div class="mini-title">
-            <div class="mini-name">${idx + 1}) ${escapeHtml(cleanName)} ${starsHtml}</div>
+            <div class="mini-name">${idx + 1}) ${name} ${starsHtml}</div>
             <div class="mini-tags">
               <span class="chip">Dye: <b>${escapeHtml(dye)}</b></span>
               <span class="chip">Skin: <b>${escapeHtml(skin)}</b></span>
@@ -718,6 +749,9 @@ function renderTop3Rail(top3) {
   }).join("");
 }
 
+/* =========================
+   Advanced output
+========================= */
 function renderAdvanced(outEl, data) {
   const rec = Number(data?.recommended);
   const rl = Number(data?.range_low);
@@ -748,7 +782,7 @@ function renderAdvanced(outEl, data) {
         <div class="out-box-k">Range</div>
         <div class="out-box-v">${escapeHtml(rangeText)} <span class="out-box-s">(Top ${rc || 0})</span></div>
       </div>
-      <div class="out-box out-box-lowest">
+      <div class="out-box">
         <div class="out-box-k">Current Lowest Live Match</div>
         <div class="out-box-v">${escapeHtml(liveText)}</div>
         ${liveEnds ? `<div class="out-box-s">${escapeHtml(liveEnds)}</div>` : ""}
@@ -761,6 +795,9 @@ function renderAdvanced(outEl, data) {
   renderTop3Rail(Array.isArray(data.top3) ? data.top3 : []);
 }
 
+/* =========================
+   Advanced run
+========================= */
 async function runAdvancedMode() {
   const out = $("advOut");
   const btn = $("advBtn");
@@ -779,20 +816,17 @@ async function runAdvancedMode() {
 
   if (!out || !btn || !itemEl || !starsEl || !enchEl) return;
 
-  const rawPicked = (itemEl.dataset.key || "").trim();
-  const rawTyped = (itemEl.value || "").trim();
-  const item = stripStarsFromName(rawPicked || rawTyped);
-
+  const item = (itemEl.dataset.key || itemEl.value || "").trim();
   const stars10 = Number(starsEl.value || 0);
   const enchants = (enchEl.value || "").trim();
 
   const rarity = String(rarityEl?.value || "").trim().toLowerCase();
-  const dye = stripStarsFromName(((dyeEl?.dataset.key || dyeEl?.value) || "").trim());
-  const skin = stripStarsFromName(((skinEl?.dataset.key || skinEl?.value) || "").trim());
+  const dye = ((dyeEl?.dataset.key || dyeEl?.value) || "").trim();
+  const skin = ((skinEl?.dataset.key || skinEl?.value) || "").trim();
 
   const petitem = ((petItemEl?.dataset.key || petItemEl?.value) || "").trim();
   const petlvl = petLevelEl?.value ? Number(petLevelEl.value.trim()) : 0;
-  const petskin = stripStarsFromName(((petSkinEl?.dataset.key || petSkinEl?.value) || "").trim());
+  const petskin = ((petSkinEl?.dataset.key || petSkinEl?.value) || "").trim();
 
   const wi = !!wiEl?.checked;
 
@@ -832,31 +866,30 @@ async function runAdvancedMode() {
 /* =========================
    Wire once
 ========================= */
-document.addEventListener("DOMContentLoaded", async () => {
-  assertIdsExist([
-    "advItem","itemSuggest",
-    "advEnchants","enchSuggest",
-    "advDye","dyeSuggest",
-    "advSkin","skinSuggest",
-    "advPetSkin","petSkinSuggest",
-    "advPetItem","petItemSuggest",
-    "advBtn","advOut","top3Rail"
-  ]);
-
-  const health = await safeFetchJson("/api/health");
-  dbg("health:", health.ok ? "ok" : `bad(${health.status})`);
-
+document.addEventListener("DOMContentLoaded", () => {
   document.querySelectorAll(".browse-tabs .tab").forEach((t) => {
     t.addEventListener("click", () => setView(t.dataset.view));
-  });
-  document.querySelectorAll(".js-nav").forEach((b) => {
-    b.addEventListener("click", () => setView(b.dataset.view));
   });
 
   setView("basics");
 
+  $("calcBtn")?.addEventListener("click", runCalculator);
+  $("lowballBtn")?.addEventListener("click", runLowballCalculator);
+
   $("advItem")?.addEventListener("input", updateWIVisibility);
   updateWIVisibility();
+
+  $("advBtn")?.addEventListener("click", () => { setView("advanced"); runAdvancedMode(); });
+
+  document.addEventListener("click", async (e) => {
+    const btn = e.target?.closest?.(".uuid-copy-btn");
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const uuid = btn.getAttribute("data-uuid") || "";
+    const ok = await copyTextToClipboard(uuid);
+    setUuidBtnState(btn, ok ? "Copied!" : "Copy failed", ok);
+  });
 
   setupStars10Slider();
 
@@ -867,6 +900,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupAutocomplete({ inputId: "advSkin", boxId: "skinSuggest", endpoint: "/api/skins", limit: 30 });
   setupAutocomplete({ inputId: "advPetSkin", boxId: "petSkinSuggest", endpoint: "/api/petskins", limit: 30 });
 
+  // ✅ Pet Item local autocomplete (requires: advPetItem + petItemSuggest in HTML)
   setupLocalAutocomplete({
     inputId: "advPetItem",
     boxId: "petItemSuggest",
@@ -874,27 +908,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     limit: 30,
   });
 
-  // ✅ THIS WAS MISSING: button handler
-  $("advBtn")?.addEventListener("click", runAdvancedMode);
-
-  // ✅ Enter key = run
-  ["advItem","advEnchants","advDye","advSkin","advPetItem","advPetLevel","advPetSkin"].forEach((id) => {
-    $(id)?.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        runAdvancedMode();
-      }
-    });
-  });
-
-  // ✅ UUID copy handler (you render UUID buttons already)
-  document.addEventListener("click", async (e) => {
-    const btn = e.target.closest(".uuid-copy-btn");
-    if (!btn) return;
-    const uuid = btn.getAttribute("data-uuid") || "";
-    const ok = await copyTextToClipboard(uuid);
-    setUuidBtnState(btn, ok ? "COPIED" : "FAILED", ok);
-  });
-
-  dbg("script.js v9 loaded");
+  renderTop3Rail([]);
 });
+
