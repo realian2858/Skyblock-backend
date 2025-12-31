@@ -124,13 +124,11 @@ function escapeHtml(s) {
 function cleanEnchantsValue(raw) {
   const s = String(raw || "").trim();
   if (!s) return "";
-
-  // if the input accidentally contains UI helper text, ignore it
   if (/^start typing:/i.test(s)) return "";
   if (s.includes("→")) return "";
-
   return s;
 }
+
 
 function normalizeTextForDedupe(s) {
   return String(s || "")
@@ -1049,4 +1047,5 @@ document.addEventListener("DOMContentLoaded", () => {
 
   renderTop3Rail([]);
 });
+
 
