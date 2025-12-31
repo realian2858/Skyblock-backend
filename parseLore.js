@@ -90,22 +90,10 @@ function tokenize(s) {
 
 function stripReforgePrefixTokens(tokens) {
   const t = Array.isArray(tokens) ? tokens.slice() : tokenize(tokens);
-
-  // Also strip common cosmetic prefixes that can appear before reforges
-  // e.g. "Shiny Suspicious Hyperion" -> "Hyperion"
-  const SOFT_PREFIXES = new Set(["shiny"]);
-
-  // up to 3 removals to handle: shiny + reforge + item
-  for (let i = 0; i < 3; i++) {
-    if (t.length > 1 && REFORGE_PREFIXES.has(t[0])) { t.shift(); continue; }
-    if (t.length > 1 && SOFT_PREFIXES.has(t[0])) { t.shift(); continue; }
-    // special: if first token is not removable, but second is a reforge AND first is a soft prefix already handled above
-    break;
+  for (let i = 0; i < 2; i++) {
+    if (t.length > 1 && REFORGE_PREFIXES.has(t[0])) t.shift();
+    else break;
   }
-
-  // If we stripped "shiny" but the next token is still a reforge, strip it too.
-  if (t.length > 1 && REFORGE_PREFIXES.has(t[0])) t.shift();
-
   return t;
 }
 
@@ -607,22 +595,36 @@ function extractEnchants(extra) {
 
 
 function extractStars(extra) {
-  const d = Number(extra?.dungeon_item_level ?? 0);
-  const u = Number(extra?.upgrade_level ?? 0);
+  const dRaw = Number(extra?.dungeon_item_level ?? 0);
+  const uRaw = Number(extra?.upgrade_level ?? 0);
 
+  const dFinite = Number.isFinite(dRaw) ? Math.trunc(dRaw) : 0;
+  const uFinite = Number.isFinite(uRaw) ? Math.trunc(uRaw) : 0;
 
-  const dstars = Number.isFinite(d) ? Math.max(0, Math.min(5, Math.trunc(d))) : 0;
-
-
-  let mstars = 0;
-  if (Number.isFinite(u)) {
-    const total = Math.max(0, Math.min(10, Math.trunc(u)));
-    if (total > 5) mstars = total - 5;
-    if (!dstars && total <= 5) return { dstars: total, mstars: 0 };
+  // Hypixel is inconsistent:
+  // - some items store TOTAL stars (0–10) in dungeon_item_level
+  // - some store 0–5 there and use upgrade_level for total (0–10)
+  //
+  // We normalize to:
+  //   dstars: 0–5 (dungeon stars)
+  //   mstars: 0–5 (master stars)
+  //
+  // If dungeon_item_level looks like a total (6–10) and upgrade_level is missing/0,
+  // treat dungeon_item_level as the total.
+  if (dFinite > 5 && uFinite <= 0) {
+    const total = Math.max(0, Math.min(10, dFinite));
+    return { dstars: Math.min(5, total), mstars: Math.max(0, total - 5) };
   }
 
+  const dstars = Math.max(0, Math.min(5, dFinite));
 
-  return { dstars, mstars };
+  // Prefer upgrade_level if present (it represents total 0–10)
+  if (uFinite > 0) {
+    const total = Math.max(0, Math.min(10, uFinite));
+    return { dstars: Math.min(5, total), mstars: Math.max(0, total - 5) };
+  }
+
+  return { dstars, mstars: 0 };
 }
 
 
