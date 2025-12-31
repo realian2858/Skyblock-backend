@@ -189,23 +189,18 @@ function clampInt(n, lo, hi) {
 }
 
 
-function masterDigitGlyph(n) {
-  const v = Math.max(0, Math.min(5, Number(n) || 0));
-  return v === 0 ? "" : (["", "➊", "➋", "➌", "➍", "➎"][v] || "");
-}
-
 function renderStarsHtml(dungeonStars, masterStars) {
-  const ds = Math.max(0, Math.min(5, Number(dungeonStars) || 0));
-  const ms = Math.max(0, Math.min(5, Number(masterStars) || 0));
-  const total = Math.max(0, Math.min(10, ds + ms));
+  const ds = clampInt(dungeonStars, 0, 5);
+  const ms = clampInt(masterStars, 0, 5);
+  if (ds <= 0 && ms <= 0) return "";
 
-  if (total <= 0) return "";
+  // Requested format: (item) (stars icons) (master star number)
+  // - Dungeon stars: ✪ repeated 1–5
+  // - Master stars: show as a clear badge "M#"
+  const icons = "✪".repeat(ds);
 
-  if (total <= 5) {
-    return `<span class="stars">${"✪".repeat(total)}</span>`;
-  }
-
-  return `<span class="stars">${"✪".repeat(5)}<span class="mstar-digit">${masterDigitGlyph(ms)}</span></span>`;
+  const master = ms > 0 ? `<span class="mstar-badge" title="Master Stars">M${ms}</span>` : "";
+  return `<span class="sb-stars" aria-label="Dungeon stars">${escapeHtml(icons)}</span>${master}`;
 }
 
 
