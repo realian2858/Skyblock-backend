@@ -80,13 +80,6 @@ function sigMasterStars(sig) {
 function sigStars10(sig) {
   return Math.max(0, Math.min(10, sigDungeonStars(sig) + sigMasterStars(sig)));
 }
-
-function splitStars10(stars10) {
-  const s = Math.max(0, Math.min(10, Number(stars10) || 0));
-  if (s <= 5) return { dstars: s, mstars: 0, stars10: s };
-  return { dstars: 5, mstars: s - 5, stars10: s };
-}
-
 function sigWI(sig) {
   return sigGet(sig, "wither_impact") === "1";
 }
@@ -395,26 +388,10 @@ function strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters }) {
 
   const inStars = Number(inputStars10) || 0;
   if (inStars > 0) {
-    const in = splitStars10(inStars);
-    const saD = sigDungeonStars(sig);
-    const saM = sigMasterStars(sig);
-    const saStars = Math.max(0, Math.min(10, saD + saM));
-    const diff = Math.abs(saStars - in.stars10);
-
-    // PERFECT requires exact (dstars, mstars) match
-    if (diff === 0) {
-      if (saD !== in.dstars || saM !== in.mstars) return "NONE";
-    } else if (diff === 1) {
-      // PARTIAL allowed only when total differs by 1 AND the distribution is plausible
-      const plausible =
-        (saD === in.dstars) ||
-        (saM === in.mstars) ||
-        (in.dstars === 5 && saD === 5); // master-star cases
-      if (!plausible) return "NONE";
-      anyPartial = true;
-    } else {
-      return "NONE";
-    }
+    const saStars = sigStars10(sig);
+    const diff = Math.abs(saStars - inStars);
+    if (diff === 1) anyPartial = true;
+    else if (diff >= 2) return "NONE";
   }
 
   const saleEnchants = sigEnchantMap(sig);
@@ -448,30 +425,16 @@ function tierBonusForTier(tier) {
 const W_EXACT_STARS = tierBonusForTier("AAA");
 const W_PARTIAL_STARS = tierBonusForTier("A");
 
-function starsScore(inputStars10, sig) {
+function starsScore(inputStars10, saleStars10) {
   const inS = Math.max(0, Math.min(10, Number(inputStars10) || 0));
-  if (!inS) return 0;
+  const saS = Math.max(0, Math.min(10, Number(saleStars10) || 0));
+  if (inS <= 0) return { add: 0, tier: null, label: null };
 
-  const in = splitStars10(inS);
-  const saD = sigDungeonStars(sig);
-  const saM = sigMasterStars(sig);
-  const saS = Math.max(0, Math.min(10, saD + saM));
-  if (!saS) return 0;
-
-  const diff = Math.abs(saS - in.stars10);
-  if (diff === 0) {
-    return (saD === in.dstars && saM === in.mstars) ? W_EXACT_STARS : 0;
-  }
-  if (diff === 1) {
-    const plausible =
-      (saD === in.dstars) ||
-      (saM === in.mstars) ||
-      (in.dstars === 5 && saD === 5);
-    return plausible ? W_PARTIAL_STARS : 0;
-  }
-  return 0;
+  const diff = Math.abs(saS - inS);
+  if (diff === 0) return { add: W_EXACT_STARS, tier: "AAA", label: `Stars ${inS} → ${saS}` };
+  if (diff === 1) return { add: W_PARTIAL_STARS, tier: "PARTIAL", label: `Stars ${inS} → ${saS}` };
+  return { add: 0, tier: "MISC", label: `Stars ${inS} → ${saS}` };
 }
-
 
 function scorePartial({ userEnchantsMap, inputStars10, sig, filters }) {
   const matched = [];
@@ -487,7 +450,7 @@ function scorePartial({ userEnchantsMap, inputStars10, sig, filters }) {
     if (!sig) {
       score -= 1;
     } else {
-      const st = starsScore(inputStars10, sig);
+      const st = starsScore(inputStars10, sigStars10(sig));
       score += st.add;
       if (st.label) matched.push({ enchant: { tier: st.tier, label: st.label }, add: st.add });
     }
@@ -791,24 +754,15 @@ app.get("/api/items", async (req, res) => {
 /* =========================
    Enchant autocomplete (same)
 ========================= */
-const ENCHANT_CATALOG_NORM = (() => {
-  // Build from parseLore tier map so autocomplete + tiers always match strict logic
-  const cat = getEnchantCatalog(); // [{nameKey,maxLevel,...}]
-  return cat
-    .filter((e) => e && e.nameKey && Number(e.maxLevel) > 0)
-    .map((e) => ({
-      nameKey: e.nameKey,
-      name: e.nameKey
-        .split(" ")
-        .filter(Boolean)
-        .map((w) => w[0].toUpperCase() + w.slice(1))
-        .join(" "),
-      key: normKey(e.nameKey),
-      min: 1,
-      max: Math.max(1, Math.trunc(Number(e.maxLevel) || 1)),
-    }))
-    .sort((a, b) => a.key.localeCompare(b.key));
-})();
+const ENCHANT_CATALOG = getEnchantCatalog();
+
+// Normalize once for fast searching (and keep display labels consistent)
+const ENCHANT_CATALOG_NORM = ENCHANT_CATALOG.map((e) => ({
+  name: e.name,
+  key: normKey(e.name),
+  min: e.min,
+  max: e.max,
+}));
 app.get("/api/enchants", (req, res) => {
   const q = normKey(req.query.q || "");
   const LIMIT = Math.max(5, Math.min(60, Number(req.query.limit || 30)));
@@ -857,3 +811,4 @@ const PORT = Number(process.env.PORT || 8080);
 app.listen(PORT, "0.0.0.0", async () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
+
