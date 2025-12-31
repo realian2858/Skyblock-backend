@@ -63,7 +63,6 @@
               <span class="subtle">Switch instantly</span>
             </div>
 
-            <!-- NOTE: script.js must wire .js-nav clicks; HTML is correct -->
             <button type="button" class="btn btn-primary btn-wide js-nav" data-view="basics">
               Basics (Sell + Lowball)
             </button>
@@ -165,142 +164,142 @@
           </div>
         </section>
 
-       <!-- ADVANCED -->
-<section id="view-advanced" class="view" aria-label="Advanced View" role="tabpanel" aria-labelledby="tab-advanced">
-  <div class="card card-hero">
-    <div class="card-head">
-      <h2>Advanced</h2>
-      <span class="pill pill-hero">pro</span>
-    </div>
-
-    <div class="adv-split">
-      <section class="adv-panel adv-input" aria-label="Modifiers">
-        <div class="adv-panel-head">
-          <div class="adv-panel-title">Modifiers</div>
-          <div class="adv-panel-sub">Stricter inputs → cleaner echoes.</div>
-        </div>
-
-        <div class="hero-row hero-row-3">
-          <div class="field">
-            <label for="advItem">Item</label>
-            <div class="suggest-wrap">
-              <input type="text" id="advItem" placeholder="e.g. Dark Claymore" autocomplete="off" />
-              <div class="mod-suggest" id="itemSuggest" role="listbox"></div>
-            </div>
-            <div class="hint">Type, then click a suggestion.</div>
-          </div>
-
-          <div class="field">
-            <label for="advStars10">Stars (0–10)</label>
-            <div class="range-row">
-              <input id="advStars10" type="range" min="0" max="10" step="1" value="0" />
-              <div class="range-value" id="advStars10Value">0</div>
-              <button type="button" class="btn-icon" id="advStars10Clear" title="Reset stars">↺</button>
-            </div>
-          </div>
-
-          <div class="field">
-            <label for="advRarity">Rarity (optional)</label>
-            <select id="advRarity">
-              <option value="">Any</option>
-              <option value="common">Common</option>
-              <option value="uncommon">Uncommon</option>
-              <option value="rare">Rare</option>
-              <option value="epic">Epic</option>
-              <option value="legendary">Legendary</option>
-              <option value="mythic">Mythic</option>
-              <option value="divine">Divine</option>
-              <option value="special">Special</option>
-              <option value="very special">Very Special</option>
-            </select>
-            <div class="hint">Used for strict recommendations.</div>
-          </div>
-        </div>
-
-        <div class="hero-row hero-row-1">
-          <div class="field">
-            <label for="advPetItem">Pet Item (optional)</label>
-            <div class="suggest-wrap">
-              <input id="advPetItem" type="text" placeholder="Start typing a pet item..." autocomplete="off" />
-              <div class="mod-suggest" id="petItemSuggest" role="listbox"></div>
-            </div>
-          </div>
-        </div>
-
-        <div class="hero-row hero-row-1" id="wiRow">
-          <label class="toggle">
-            <input type="checkbox" id="advWI" />
-            <span class="toggle-ui" aria-hidden="true"></span>
-            <span class="toggle-text">Wither Impact (Implosion + Warp + Shield)</span>
-          </label>
-        </div>
-
-        <div class="hero-row hero-row-2">
-          <div class="field">
-            <label for="advEnchants">Enchants</label>
-            <div class="suggest-wrap">
-              <input type="text" id="advEnchants" placeholder="Start typing: chim → Chimera 5" autocomplete="off" />
-              <div class="mod-suggest" id="enchSuggest" role="listbox"></div>
-            </div>
-            <div class="hint">Comma-separated is OK.</div>
-
-            <label for="advDye" style="margin-top:16px;">Dye (optional)</label>
-            <div class="suggest-wrap">
-              <input type="text" id="advDye" placeholder="e.g. Necron Dye" autocomplete="off" />
-              <div class="mod-suggest" id="dyeSuggest" role="listbox"></div>
+        <!-- ADVANCED -->
+        <section id="view-advanced" class="view" aria-label="Advanced View" role="tabpanel" aria-labelledby="tab-advanced">
+          <div class="card card-hero">
+            <div class="card-head">
+              <h2>Advanced</h2>
+              <span class="pill pill-hero">pro</span>
             </div>
 
-            <label for="advSkin" style="margin-top:16px;">Helmet Skin (optional)</label>
-            <div class="suggest-wrap">
-              <input type="text" id="advSkin" placeholder="e.g. True Warden Skin" autocomplete="off" />
-              <div class="mod-suggest" id="skinSuggest" role="listbox"></div>
+            <div class="adv-split">
+              <section class="adv-panel adv-input" aria-label="Modifiers">
+                <div class="adv-panel-head">
+                  <div class="adv-panel-title">Modifiers</div>
+                  <div class="adv-panel-sub">Stricter inputs → cleaner echoes.</div>
+                </div>
+
+                <div class="hero-row hero-row-3">
+                  <div class="field">
+                    <label for="advItem">Item</label>
+                    <div class="suggest-wrap">
+                      <input type="text" id="advItem" placeholder="e.g. Dark Claymore" autocomplete="off" />
+                      <div class="mod-suggest" id="itemSuggest" role="listbox" aria-label="Item suggestions" style="display:none;"></div>
+                    </div>
+                    <div class="hint">Type, then click a suggestion.</div>
+                  </div>
+
+                  <div class="field">
+                    <label for="advStars10">Stars (0–10)</label>
+                    <div class="range-row">
+                      <input id="advStars10" type="range" min="0" max="10" step="1" value="0" />
+                      <div class="range-value" id="advStars10Value">0</div>
+                      <button type="button" class="btn-icon" id="advStars10Clear" title="Reset stars" aria-label="Reset stars">↺</button>
+                    </div>
+                  </div>
+
+                  <div class="field">
+                    <label for="advRarity">Rarity (optional)</label>
+                    <select id="advRarity">
+                      <option value="">Any</option>
+                      <option value="common">Common</option>
+                      <option value="uncommon">Uncommon</option>
+                      <option value="rare">Rare</option>
+                      <option value="epic">Epic</option>
+                      <option value="legendary">Legendary</option>
+                      <option value="mythic">Mythic</option>
+                      <option value="divine">Divine</option>
+                      <option value="special">Special</option>
+                      <option value="very special">Very Special</option>
+                    </select>
+                    <div class="hint">Used for strict recommendations.</div>
+                  </div>
+                </div>
+
+                <div class="hero-row hero-row-1">
+                  <div class="field">
+                    <label for="advPetItem">Pet Item (optional)</label>
+                    <div class="suggest-wrap">
+                      <input id="advPetItem" type="text" placeholder="Start typing a pet item..." autocomplete="off" />
+                      <div class="mod-suggest" id="petItemSuggest" role="listbox" aria-label="Pet item suggestions" style="display:none;"></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="hero-row hero-row-1" id="wiRow">
+                  <label class="toggle">
+                    <input type="checkbox" id="advWI" />
+                    <span class="toggle-ui" aria-hidden="true"></span>
+                    <span class="toggle-text">Wither Impact (Implosion + Warp + Shield)</span>
+                  </label>
+                </div>
+
+                <div class="hero-row hero-row-2">
+                  <div class="field">
+                    <label for="advEnchants">Enchants</label>
+                    <div class="suggest-wrap">
+                      <input type="text" id="advEnchants" placeholder="Start typing: chim → Chimera 5" autocomplete="off" />
+                      <div class="mod-suggest" id="enchSuggest" role="listbox" aria-label="Enchant suggestions" style="display:none;"></div>
+                    </div>
+                    <div class="hint">Comma-separated is OK.</div>
+
+                    <label for="advDye" style="margin-top:16px;">Dye (optional)</label>
+                    <div class="suggest-wrap">
+                      <input type="text" id="advDye" placeholder="e.g. Necron Dye" autocomplete="off" />
+                      <div class="mod-suggest" id="dyeSuggest" role="listbox" aria-label="Dye suggestions" style="display:none;"></div>
+                    </div>
+
+                    <label for="advSkin" style="margin-top:16px;">Helmet Skin (optional)</label>
+                    <div class="suggest-wrap">
+                      <input type="text" id="advSkin" placeholder="e.g. True Warden Skin" autocomplete="off" />
+                      <div class="mod-suggest" id="skinSuggest" role="listbox" aria-label="Helmet skin suggestions" style="display:none;"></div>
+                    </div>
+
+                    <label for="advPetLevel" style="margin-top:16px;">Pet Level (optional)</label>
+                    <input type="text" id="advPetLevel" placeholder="1–100 (1–200 for G-Drag)" inputmode="numeric" autocomplete="off" />
+
+                    <label for="advPetSkin" style="margin-top:16px;">Pet Skin (optional)</label>
+                    <div class="suggest-wrap">
+                      <input type="text" id="advPetSkin" placeholder="Start typing a pet skin…" autocomplete="off" />
+                      <div class="mod-suggest" id="petSkinSuggest" role="listbox" aria-label="Pet skin suggestions" style="display:none;"></div>
+                    </div>
+                  </div>
+
+                  <div class="field field-actions">
+                    <button id="advBtn" type="button" class="btn btn-primary btn-wide">
+                      Get Recommendation
+                    </button>
+                  </div>
+                </div>
+
+                <div class="results">
+                  <div class="result-card">
+                    <div class="result-title">Recommendation</div>
+
+                    <div id="advOut" class="adv-output">
+                      <div class="out-head">—</div>
+                      <div class="out-sub">Run a recommendation to see results.</div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <aside class="adv-panel adv-examples" aria-label="Market Echoes">
+                <div class="adv-panel-head">
+                  <div class="adv-panel-title">Market Echoes</div>
+                  <div class="adv-panel-sub">Your 3 closest matches.</div>
+                </div>
+
+                <div class="top3-grid" id="top3Rail">
+                  <div class="mini-card">
+                    <div class="mini-name">No echoes yet</div>
+                    <div class="mini-meta">Run a recommendation to reveal your closest matches.</div>
+                  </div>
+                </div>
+              </aside>
             </div>
-
-            <label for="advPetLevel" style="margin-top:16px;">Pet Level (optional)</label>
-            <input type="text" id="advPetLevel" placeholder="1–100 (1–200 for G-Drag)" inputmode="numeric" autocomplete="off" />
-
-            <label for="advPetSkin" style="margin-top:16px;">Pet Skin (optional)</label>
-            <div class="suggest-wrap">
-              <input type="text" id="advPetSkin" placeholder="Start typing a pet skin…" autocomplete="off" />
-              <div class="mod-suggest" id="petSkinSuggest" role="listbox"></div>
-            </div>
           </div>
-
-          <div class="field field-actions">
-            <button id="advBtn" type="button" class="btn btn-primary btn-wide">Get Recommendation</button>
-          </div>
-        </div>
-
-        <div class="results">
-          <div class="result-card">
-            <div class="result-title">Recommendation</div>
-
-            <!-- ✅ must be normal container -->
-            <div id="advOut" class="adv-output">
-              <div class="out-head">—</div>
-              <div class="out-sub">Run a recommendation to see results.</div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <aside class="adv-panel adv-examples" aria-label="Market Echoes">
-        <div class="adv-panel-head">
-          <div class="adv-panel-title">Market Echoes</div>
-          <div class="adv-panel-sub">Your 3 closest matches.</div>
-        </div>
-
-        <div class="top3-grid" id="top3Rail">
-          <div class="mini-card">
-            <div class="mini-name">No echoes yet</div>
-            <div class="mini-meta">Run a recommendation to reveal your closest matches.</div>
-          </div>
-        </div>
-      </aside>
-    </div>
-  </div>
-</section>
-
+        </section>
 
         <footer class="footer">
           <span class="muted">Designed for quick flips and strict comparisons.</span>
@@ -312,4 +311,3 @@
   <script src="script.js" defer></script>
 </body>
 </html>
-
