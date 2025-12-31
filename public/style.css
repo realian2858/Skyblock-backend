@@ -876,3 +876,29 @@ select option{
 .results{
   overflow: visible;
 }
+/* =========================
+   FINAL FIX: force dropdown layer above EVERYTHING
+   (prevents "it exists but I can't see/click it")
+========================= */
+.suggest-wrap { position: relative; z-index: 50; }
+.adv-panel, .card, .subcard, .hero-row, .results { position: relative; z-index: 1; }
+
+/* dropdowns become their own top layer */
+.mod-suggest,
+.suggest-box {
+  z-index: 999999 !important;
+}
+
+/* prevent sticky header from stealing clicks near top */
+.topbar { z-index: 5; }
+
+/* IMPORTANT: allow panels to not clip absolutely-positioned children */
+.card,
+.card-hero,
+.adv-panel,
+.hero-row,
+.subcard,
+.results {
+  overflow: visible !important;
+}
+
