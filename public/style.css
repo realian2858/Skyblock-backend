@@ -248,7 +248,7 @@ body{
   font-weight: 1000;
 }
 .subtle{
-  font-size: 13px;
+  font-size: 12px;
   color: rgba(255,255,255,.60);
 }
 
@@ -349,7 +349,7 @@ select option{
 
 .hint{
   margin-top:6px;
-  font-size: 13px;
+  font-size: 12px;
   color: rgba(255,255,255,.52);
 }
 
@@ -471,7 +471,7 @@ select option{
   font-size: var(--fs-3);
 }
 .adv-panel-sub{
-  font-size: 13px;
+  font-size: 12px;
   color: rgba(255,255,255,.58);
 }
 
@@ -590,7 +590,7 @@ select option{
 
 .out-head{ opacity:.95; font-weight:1000; font-size: 13.5px; font-family: var(--sans); }
 .out-big{ margin-top:6px; font-weight:1000; font-size: 15.5px; font-family: var(--mono); }
-.out-sub{ margin-top:8px; opacity:.78; font-size: 13px; font-family: var(--sans); }
+.out-sub{ margin-top:8px; opacity:.78; font-size: 12px; font-family: var(--sans); }
 .out-err{ font-weight: 1000; color: rgba(255,120,120,.95); font-family: var(--sans); }
 
 
@@ -625,7 +625,7 @@ select option{
   margin-top:5px;
   font-family: var(--mono);
   font-weight:1000;
-  font-size: 13px;
+  font-size: 12px;
 }
 .out-box-s{
   opacity:.72;
@@ -708,7 +708,7 @@ select option{
 }
 .mini-meta{
   margin-top:8px;
-  font-size: 13px;
+  font-size: 12px;
   color: rgba(255,255,255,.74);
 }
 .mini-actions{
@@ -818,7 +818,7 @@ select option{
   border: 1px solid rgba(255,255,255,.06);
   background: rgba(255,255,255,.03);
 }
-.metric-label{ font-size: 13px; color: rgba(255,255,255,.60); }
+.metric-label{ font-size: 12px; color: rgba(255,255,255,.60); }
 .metric-value{
   margin-top: 6px;
   font-size: 20px;
@@ -852,7 +852,7 @@ select option{
   border-radius:999px;
   border:1px solid rgba(255,255,255,.10);
   background: rgba(255,255,255,.06);
-  font-size: 13px;
+  font-size: 12px;
   color: rgba(255,255,255,.88);
   font-weight:1000;
 }
@@ -869,7 +869,7 @@ select option{
   color: rgba(255,255,255,.95);
   font-weight:1000;
   cursor:pointer;
-  font-size: 13px;
+  font-size: 12px;
 }
 .uuid-copy-btn.uuid-ok{ border-color: rgba(62,230,208,.35); background: rgba(62,230,208,.10); }
 .uuid-copy-btn.uuid-bad{ border-color: rgba(255,80,80,.45); background: rgba(255,80,80,.10); }
@@ -881,7 +881,7 @@ select option{
 .footer{
   margin-top: 12px;
   text-align:center;
-  font-size: 13px;
+  font-size: 12px;
   color: rgba(255,255,255,.48);
 }
 .muted{ color: rgba(255,255,255,.58); }
@@ -963,10 +963,10 @@ select option{
   align-items: center;
   justify-content: center;
   margin-left: 8px;
-  padding: 3px 8px;
+  padding: 2px 7px;
   border-radius: 10px;
   font-weight: 900;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1;
   background: rgba(160, 100, 255, 0.18);
   border: 1px solid rgba(160, 100, 255, 0.45);
