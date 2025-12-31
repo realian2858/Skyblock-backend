@@ -622,7 +622,7 @@ app.get("/api/recommend", async (req, res) => {
       FROM auctions
       WHERE is_ended = false
         AND bin = true
-        AND item_key = $1
+        AND (item_key = $1 OR item_key LIKE ($1 || ' %'))
         AND last_seen_ts >= $2
       ORDER BY starting_bid ASC
       LIMIT 3000
@@ -813,6 +813,7 @@ const PORT = Number(process.env.PORT || 8080);
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
+
 
 
 
