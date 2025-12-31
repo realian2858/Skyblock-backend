@@ -947,12 +947,21 @@ select option{
 /* stars numeric display (e.g., 3(2)) */
 .stars-num{ font-weight:600; opacity:.9; }
 
-/* Clear master star glyph */
-.mstar-glyph{
-  font-size: 16px;
-  font-weight: 800;
-  letter-spacing: 0.5px;
-  text-shadow: 0 0 6px rgba(168,85,247,0.45);
-  color: #c084fc;
+/* ===== Stars rendering (Market Echoes title) ===== */
+.stars{
+  display:inline-flex;
+  align-items:center;
+  gap:1px;
+  letter-spacing:0.5px;
+  font-size:0.98em;
 }
-.sb-stars{ font-weight: 800; }
+.mstar-digit{
+  display:inline-block;
+  margin-left:2px;
+  font-weight:900;
+  font-size:1.2em;
+  line-height:1;
+  transform: translateY(-0.05em);
+  text-shadow: 0 0 8px rgba(255,255,255,0.35);
+  -webkit-font-smoothing: antialiased;
+}
