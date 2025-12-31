@@ -24,7 +24,7 @@ import { parse as parseNbt } from "prismarine-nbt";
 export function cleanText(s) {
   let x = String(s ?? "").normalize("NFKC");
   x = x.replace(/§./g, ""); // MC color codes
-  x = x.replace(/[’]/g, "'"); // normalize apostrophes
+  x = x.replace(/[']/g, "'"); // normalize apostrophes
   x = x.replace(/[^\p{L}\p{N}\s']/gu, " "); // letters/numbers/spaces/apostrophes
   x = x.replace(/\s+/g, " ").trim();
   return x;
@@ -34,7 +34,7 @@ export function cleanText(s) {
 export function normKey(s) {
   return cleanText(s)
     .toLowerCase()
-    .replace(/['’]/g, "")
+    .replace(/['']/g, "")
     .replace(/[-_]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -66,7 +66,6 @@ function stripVariantDigits(s) {
    Reforge stripping
 ========================= */
 const REFORGE_PREFIXES = new Set([
-  "shiny",
   // bows
   "hasty","precise","rapid","spiritual","fine","neat","grand","awkward","rich","headstrong","unreal",
   // weapons
@@ -595,46 +594,23 @@ function extractEnchants(extra) {
 }
 
 
-
-function extractStars(extra, itemName, loreLines) {
-  // Prefer glyphs in the display name / lore (most reliable, avoids false positives from unrelated NBT fields)
-  const nameStr = stripColor(itemName || "");
-  const loreStr = Array.isArray(loreLines) ? loreLines.map(stripColor).join("
-") : stripColor(String(loreLines || ""));
-
-  const DINGBATS = {
-    "➊": 1, "➋": 2, "➌": 3, "➍": 4, "➎": 5,
-    "❶": 1, "❷": 2, "❸": 3, "❹": 4, "❺": 5, // some fonts
-  };
-
-  function parseFromText(txt) {
-    const stars = (txt.match(/✪/g) || []).length;
-    let m = 0;
-    for (const ch of txt) {
-      if (DINGBATS[ch]) m = Math.max(m, DINGBATS[ch]);
-    }
-    // If the item shows master star digit, Hypixel usually shows 5 dungeon stars + that digit
-    if (m > 0) return { dstars: 5, mstars: m, fromText: true };
-    if (stars > 5) return { dstars: 5, mstars: Math.min(5, stars - 5), fromText: true };
-    if (stars > 0) return { dstars: Math.min(5, stars), mstars: 0, fromText: true };
-    return { dstars: 0, mstars: 0, fromText: false };
-  }
-
-  // First: item name
-  const a = parseFromText(nameStr);
-  if (a.fromText) return { dstars: a.dstars, mstars: a.mstars };
-
-  // Second: lore (some items don't include glyphs in name)
-  const b = parseFromText(loreStr);
-  if (b.fromText) return { dstars: b.dstars, mstars: b.mstars };
-
-  // Fallback: NBT fields (least reliable, but keeps legacy behavior if text is absent)
+function extractStars(extra) {
   const dRaw = Number(extra?.dungeon_item_level ?? 0);
   const uRaw = Number(extra?.upgrade_level ?? 0);
+
   const dFinite = Number.isFinite(dRaw) ? Math.trunc(dRaw) : 0;
   const uFinite = Number.isFinite(uRaw) ? Math.trunc(uRaw) : 0;
 
-  // Some items store TOTAL stars (0–10) in dungeon_item_level
+  // Hypixel is inconsistent:
+  // - some items store TOTAL stars (0–10) in dungeon_item_level
+  // - some store 0–5 there and use upgrade_level for total (0–10)
+  //
+  // We normalize to:
+  //   dstars: 0–5 (dungeon stars)
+  //   mstars: 0–5 (master stars)
+  //
+  // If dungeon_item_level looks like a total (6–10) and upgrade_level is missing/0,
+  // treat dungeon_item_level as the total.
   if (dFinite > 5 && uFinite <= 0) {
     const total = Math.max(0, Math.min(10, dFinite));
     return { dstars: Math.min(5, total), mstars: Math.max(0, total - 5) };
@@ -642,7 +618,7 @@ function extractStars(extra, itemName, loreLines) {
 
   const dstars = Math.max(0, Math.min(5, dFinite));
 
-  // Prefer upgrade_level if present (it represents total 0–10) BUT clamp to avoid false master stars
+  // Prefer upgrade_level if present (it represents total 0–10)
   if (uFinite > 0) {
     const total = Math.max(0, Math.min(10, uFinite));
     return { dstars: Math.min(5, total), mstars: Math.max(0, total - 5) };
@@ -650,7 +626,6 @@ function extractStars(extra, itemName, loreLines) {
 
   return { dstars, mstars: 0 };
 }
-
 
 
 function extractPetLevel(extra, itemName) {
@@ -720,7 +695,7 @@ export async function buildSignature({ itemName = "", lore = "", tier = "", item
   const enchTokens = mapToEnchantTokens(enchMap);
 
 
-  const { dstars, mstars } = extractStars(extra, itemName, loreLines);
+  const { dstars, mstars } = extractStars(extra);
   const hasWI = extractWitherImpactFlag(itemName, rootParsed);
   const petLevel = extractPetLevel(extra, itemName);
 
