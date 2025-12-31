@@ -1,13 +1,10 @@
-/* public/style.css (v10.2 - V10 RESTORED + TODAY'S FIXES MERGED)
+/* public/style.css (FULL REWRITE v10 + LOWEST PRICE & SUGGESTION ADDITIONS)
 Goals:
-- PRESERVE your v10 styling (Market Echoes, compact layout, tier colors, etc.)
-- KEEP: Live Signature styling + Lowest Price box + perfect match highlight/badge
-- FIX TODAY:
-  ✅ Advanced section clipping/disappearing (overflow + flex/grid min-height)
-  ✅ Dropdowns clipping / behind panels
-  ✅ Unify suggest-box + mod-suggest behavior
+- PRESERVE ALL ORIGINAL V9/V10 LINES (Market Echoes, compact layout, tier colors, etc.)
+- ADD: Live Signature styling for the Perfect Match field
+- ADD: Improved field-actions spacing to prevent height shifts
+- ADD: Lowest Price visual box inside results
 */
-
 
 :root{
   --bg0:#060910;
@@ -116,7 +113,7 @@ body{
 .browse{
   margin-bottom:12px;
   border-radius:12px;
-  overflow:hidden;
+  overflow:visible;
   box-shadow: var(--shadow);
   border:1px solid rgba(255,255,255,.06);
 }
@@ -367,78 +364,52 @@ select option{
 .btn-icon:hover{ background: rgba(255,255,255,.10); }
 
 /* =========================
-    Suggestions dropdown (FIXED TODAY)
-    - anchor correctly under input
-    - unify suggest-box + mod-suggest look
-    - prevent clipping via overflow-visible rules below
+    Suggestions dropdown
 ========================= */
-.suggest-wrap{ position:relative; }
-.input-wrap{ position:relative; }
-.select-wrap{ position:relative; }
-
-/* Unify dropdown containers */
-.mod-suggest,
-.suggest-box{
+.suggest-wrap{ position:relative; overflow: visible; }
+.mod-suggest{
   position:absolute;
-  left:0;
-  right:0;
-  top: calc(100% + 8px);   /* ✅ correct anchor */
-  margin-top: 0;           /* ✅ prevent double spacing */
-
+  left:0; right:0;
+  margin-top:8px;
   border-radius:14px;
   border:1px solid rgba(255,255,255,.12);
-  background: rgba(10,14,22,.98);
+  background: rgba(10,14,22,1);
   backdrop-filter: blur(10px);
   box-shadow: var(--shadow);
-
   max-height:240px;
   overflow:auto;
-
-  z-index:9999;            /* ✅ stay above panels/cards */
-  display:none;
+  z-index:99999;
+  pointer-events:auto;
+  display: none;
 }
-
-.mod-suggest .item,
-.suggest-box .item{
+.mod-suggest .item{
   padding:10px 12px;
   border-bottom:1px solid rgba(255,255,255,.06);
   cursor:pointer;
   color: rgba(255,255,255,.94);
   font-size: 13.5px;
-  user-select:none;
 }
-.mod-suggest .item:last-child,
-.suggest-box .item:last-child{
-  border-bottom:none;
-}
-.mod-suggest .item:hover,
-.suggest-box .item:hover{
-  background: rgba(79,125,255,.14);
-}
+.mod-suggest .item:hover{ background: rgba(79,125,255,.14); }
 
 /* =========================
     Advanced layout (match bottoms)
-    ✅ FIX TODAY: stop clipping / disappearing
 ========================= */
 .adv-split{
   display:grid;
   grid-template-columns: 640px 1fr;
   gap:14px;
   padding:14px;
-  align-items:stretch;   /* makes both panels same height */
+  align-items:stretch;   /* ✅ makes both panels same height */
 }
 
 .adv-panel{
   border-radius:16px;
   border:1px solid rgba(255,255,255,.10);
   background: rgba(0,0,0,.16);
-
-  /* ✅ BIG FIX: overflow hidden clips advanced content + dropdowns */
-  overflow: visible;
-
+  overflow:hidden;
   display:flex;
-  flex-direction:column;
-  min-height: 0;         /* ✅ required for nested flex/grid sizing */
+  flex-direction:column; /* ✅ enables inner stretching */
+  min-height: 100%;
 }
 
 .adv-panel-head{
@@ -460,7 +431,7 @@ select option{
 }
 
 /* left panel rows */
-.hero-row{ padding:12px 14px; position:relative; overflow: visible; }
+.hero-row{ padding:12px 14px; }
 .hero-row + .hero-row{ border-top:1px solid rgba(255,255,255,.06); }
 
 .hero-row-3{
@@ -475,12 +446,8 @@ select option{
 }
 .hero-row-1{ padding: 10px 14px; }
 
-/* Adjusted to accommodate Live Signature without stretching layout */
-.field-actions{
-  display:flex;
-  flex-direction:column;
-  gap:0;
-}
+/* NEW: Adjusted to accommodate Live Signature without stretching layout */
+.field-actions{ display:flex; flex-direction: column; gap: 0; }
 
 /* Range row */
 .range-row{
@@ -540,9 +507,9 @@ select option{
 }
 
 /* =========================
-    Recommendation card
+    Recommendation card: make it compact so everything fits
 ========================= */
-.results{ padding: 0 14px 14px; overflow: visible; }
+.results{ padding: 0 14px 14px; }
 
 .result-card{
   border-radius: 16px;
@@ -560,7 +527,7 @@ select option{
 .result-pre{ padding: 10px 12px; }
 
 #advOut{
-  max-height: 210px;
+  max-height: 210px; /* ✅ less tall to avoid scroll */
   overflow:auto;
   font-family: var(--mono);
   font-size: 12.5px;
@@ -585,7 +552,7 @@ select option{
   padding:8px 10px;
 }
 
-/* Lowest Price Specialized Box */
+/* ADDED: Lowest Price Specialized Box */
 .out-box-lowest {
   border-color: rgba(62,230,208,.3);
   background: rgba(62,230,208,.05);
@@ -617,7 +584,7 @@ select option{
 }
 
 /* =========================
-    Market Echoes
+    Market Echoes: stretch to match left panel bottom
 ========================= */
 .top3-grid{
   padding:12px;
@@ -625,8 +592,8 @@ select option{
   grid-template-columns: repeat(3, minmax(240px, 1fr));
   gap:12px;
   align-items:stretch;
-  flex: 1;
-  min-height: 0;
+  flex: 1;                  /* ✅ fill remaining panel height */
+  min-height: 0;           /* ✅ allow internal fitting */
 }
 
 .mini-card{
@@ -637,7 +604,7 @@ select option{
   overflow:hidden;
   display:flex;
   flex-direction:column;
-  min-height: 0;
+  min-height: 0;           /* ✅ grid stretch */
 }
 .mstar-num{
   font-weight: 900;
@@ -713,7 +680,7 @@ select option{
 }
 
 /* =========================
-    Enchants list
+    Enchants list (more compact)
 ========================= */
 .ench-list{ margin-top:8px; display:flex; flex-direction:column; gap:6px; }
 .ench-more{ opacity:.70; margin-top:6px; font-size: 11.5px; }
@@ -737,7 +704,7 @@ select option{
 }
 
 .ench-text{
-  font-size: 12.2px;
+  font-size: 12.2px;  
   font-weight: 900;
   line-height: 1.18;
   color: var(--tier-misc);
@@ -753,26 +720,24 @@ select option{
   background: rgba(181,107,255,.10);
   color: rgba(220,190,255,.95);
 }
-
-/* Perfect match visuals */
 .perfect-match-highlight {
-  border: 2px solid var(--accent2) !important;
-  box-shadow: 0 0 15px rgba(62, 230, 208, 0.4);
-  position: relative;
-}
-.perfect-badge {
-  position: absolute;
-  top: -10px;
-  right: 10px;
-  background: var(--accent2);
-  color: #000;
-  font-weight: 1000;
-  font-size: 10px;
-  padding: 2px 8px;
-  border-radius: 4px;
-  z-index: 5;
+    border: 2px solid var(--accent2) !important;
+    box-shadow: 0 0 15px rgba(62, 230, 208, 0.4);
+    position: relative;
 }
 
+.perfect-badge {
+    position: absolute;
+    top: -10px;
+    right: 10px;
+    background: var(--accent2);
+    color: #000;
+    font-weight: 1000;
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    z-index: 5;
+}
 /* =========================
     Metrics (Basics)
 ========================= */
@@ -869,36 +834,29 @@ select option{
 }
 
 /* =========================
-   TODAY FIX: allow dropdowns to escape containers
+    AUTOCOMPLETE UI ADDITION
 ========================= */
-.hero-row,
-.subcard,
-.results{
-  overflow: visible;
-}
-/* =========================
-   FINAL FIX: force dropdown layer above EVERYTHING
-   (prevents "it exists but I can't see/click it")
-========================= */
-.suggest-wrap { position: relative; z-index: 50; }
-.adv-panel, .card, .subcard, .hero-row, .results { position: relative; z-index: 1; }
-
-/* dropdowns become their own top layer */
-.mod-suggest,
 .suggest-box {
-  z-index: 999999 !important;
+  position: absolute;
+  background: #121826;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  z-index: 1000;
+  max-height: 250px;
+  overflow-y: auto;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+  display: none;
 }
-
-/* prevent sticky header from stealing clicks near top */
-.topbar { z-index: 5; }
-
-/* IMPORTANT: allow panels to not clip absolutely-positioned children */
-.card,
-.card-hero,
-.adv-panel,
-.hero-row,
-.subcard,
-.results {
-  overflow: visible !important;
+.input-wrap { position: relative; }
+.suggest-box .item {
+  padding: 10px 14px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--stroke);
+  font-size: 13px;
+  color: var(--text);
 }
-
+.suggest-box .item:last-child { border-bottom: none; }
+.suggest-box .item:hover {
+  background: var(--accent);
+  color: white;
+}
