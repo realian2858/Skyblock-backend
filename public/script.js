@@ -122,16 +122,6 @@ function escapeHtml(s) {
 }
 
 
-function cleanDisplayName(raw) {
-  // Remove star/master glyphs and stray circles from Hypixel display names.
-  let name = String(raw ?? "");
-  name = name.replace(/§./g, "");
-  name = name.replace(/[✪★☆✯✰➊➋➌➍➎]/g, "");
-  name = name.replace(/[○●◌•]/g, "");
-  name = name.replace(/\s+/g, " ").trim();
-  return name;
-}
-
 function normalizeTextForDedupe(s) {
   return String(s || "")
     .toLowerCase()
@@ -207,11 +197,12 @@ function renderStarsHtml(dungeonStars, masterStars) {
   // Desired header format: (item) (stars) (master-star number)
   // Example: "Withered Dark Claymore ✪✪✪✪✪ [M5]"
   const dungeonIcons = "✪".repeat(ds);
-  const masterIcons = "";
+  const masterIcons = "✪".repeat(ms);
+
   const badge = ms > 0 ? `<span class="master-badge">M${ms}</span>` : "";
 
   // Render dungeon stars + (optional) master stars (styled separately)
-  return `<span class="sb-stars"><span class="dstars">${escapeHtml(dungeonIcons)}</span></span>${badge}`;
+  return `<span class="sb-stars"><span class="dstars">${escapeHtml(dungeonIcons)}</span><span class="mstars">${escapeHtml(masterIcons)}</span></span>${badge}`;
 }
 
 
@@ -779,7 +770,7 @@ function renderTop3Rail(top3) {
 
 
   rail.innerHTML = top3.slice(0, 3).map((m, idx) => {
-    const name = escapeHtml(cleanDisplayName(m.item_name ?? "—"));
+    const name = escapeHtml(m.item_name ?? "—");
 
 
     const ds = Number(m.dstars ?? m.dungeonStars ?? 0);
