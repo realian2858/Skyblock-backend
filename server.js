@@ -45,8 +45,13 @@ const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
    Display helper (prevents double star icons)
 ========================= */
 function stripStarGlyphs(s) {
+  // Hypixel item_name often includes dungeon stars and master-star circled digits.
+  // We strip all of them so the UI renders *only* from signature-derived dstars/mstars.
   return String(s || "")
-    .replace(/[✪★☆✯✰●]+/g, "")
+    // star glyphs + dot
+    .replace(/[✪★☆✯✰⭐●•]+/g, "")
+    // circled digits (①..⑳) and dingbat circled digits (➀..➓, ➊..➓)
+    .replace(/[\u2460-\u2473\u2776-\u277F\u2780-\u2793]/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -525,26 +530,32 @@ function scorePartial({ userEnchantsMap, inputStars10, sig, filters }) {
     const saTier = tierFor(nameKey, saleLvl);
     if (!inTier || !saTier || inTier === "MISC" || saTier === "MISC") continue;
 
+    // IMPORTANT: user-facing matching rules are based on *level* difference:
+    // - diff 0 => EXACT (gold)
+    // - diff 1 => PARTIAL (purple)
+    // - diff >=2 => NOT A MATCH (and the strict filter will already drop the auction)
+    const lvlDiff = Math.abs(Number(saleLvl) - Number(inL));
 
-    const diff = Math.abs(tierRank(saTier) - tierRank(inTier));
 
+    // IMPORTANT:
+    // - level diff 0 => EXACT (gold)
+    // - level diff 1 => PARTIAL (purple)
+    // - level diff >=2 => NOT A MATCH (but strict filter should have skipped already)
+    const lvlDiff = Math.abs((saleLvl || 0) - (inL || 0));
+    if (lvlDiff >= 2) continue;
 
     let tierLabel = "MISC";
     let add = 0;
 
-
-    if (diff === 0) {
+    if (lvlDiff === 0) {
       tierLabel = inTier;
       add = tierBonusForTier(inTier) + 1.2;
-    } else if (diff === 1) {
-      tierLabel = "PARTIAL";
-      add = 1.0;
     } else {
-      tierLabel = "MISC";
-      add = 0;
+      tierLabel = "PARTIAL";
+      add = 0.6;
     }
 
-
+    // Slightly reward higher requested tiers, but keep it bounded.
     add *= 1 + Math.min(10, Math.max(0, inL - 1)) * 0.08;
 
 
@@ -631,12 +642,16 @@ app.get("/api/recommend", async (req, res) => {
       const sig = String(r.signature || "").trim();
 
 
+      // STRICT FILTERING:
+      // - If any user enchant differs by >=2 tiers => NOT A MATCH (skip entirely)
+      // - If differs by 1 tier => PARTIAL (purple)
+      // - Only exact tier matches are PERFECT (gold)
       const q = strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters });
+      if (q === "NONE") continue;
       if (q === "PERFECT") perfectPrices.push(price);
       else if (q === "PARTIAL") partialPrices.push(price);
 
-
-      const sc = scorePartial({ userEnchantsMap, inputStars10, sig, filters });
+      const sc = scorePartial({ userEnchantsMap, inputStars10, sig, filters, strictQuality: q });
       if (!sc) continue;
 
 
