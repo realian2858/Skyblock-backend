@@ -1,10 +1,20 @@
-// ingest.js (v7 - MATCHED PIPELINE: normalized name everywhere, WI fixed by lore fallback, stars10 stable)
+// ingest.js (v8 - SAFE NORMALIZATION: no digit stripping, stable keys, consistent signatures)
 //
 // Cloud Run Job: RUN ONCE + EXIT
 
 import dotenv from "dotenv";
 import pg from "pg";
 import { canonicalItemKey, buildSignature } from "./parseLore.js";
+
+// ✅ fetch fallback for Node < 18 (safe for Node 18+ too)
+try {
+  if (typeof fetch === "undefined") {
+    const mod = await import("node-fetch");
+    globalThis.fetch = mod.default;
+  }
+} catch {
+  // If fetch is missing AND node-fetch isn't installed, it will error later.
+}
 
 dotenv.config();
 
@@ -71,6 +81,8 @@ function nonEmptyText(x) {
 /* =========================
    Shared normalize helpers (MATCH server)
 ========================= */
+
+// Digits mapping (kept)
 const DIGIT_CHAR_MAP = (() => {
   const map = new Map();
   const addRange = (startDigit, chars) => {
@@ -93,17 +105,35 @@ function normalizeWeirdDigits(s) {
   return out;
 }
 
-function stripStarGlyphs(s) {
-  return String(s || "")
-    .replace(/[✪★☆✯✰●⬤•○◉◎◍]+/g, "")
-    .replace(/\s*(?:[➊➋➌➍➎➏➐➑➒➓❶❷❸❹❺❻❼❽❾❿⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾①②③④⑤⑥⑦⑧⑨⓪0-9])\s*$/g, "")
+// ✅ Only star/circle glyphs (NO normal digits)
+const STAR_GLYPHS_RE = /[✪★☆✯✰●⬤•○◉◎◍]+/g;
+
+// ✅ Only “special digit glyphs” used for master stars (NO 0-9)
+const MASTER_DIGIT_GLYPHS_RE = /[➊➋➌➍➎➏➐➑➒➓❶❷❸❹❺❻❼❽❾❿⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾①②③④⑤⑥⑦⑧⑨⓪]/g;
+
+// ✅ Remove trailing stars/circles + optional trailing *glyph digit*
+const TRAILING_STARS_AND_MASTER_RE =
+  new RegExp(String.raw`\s*${STAR_GLYPHS_RE.source}\s*(?:${MASTER_DIGIT_GLYPHS_RE.source})?\s*$`);
+
+function stripStarsAndMasterGlyphs(name) {
+  return String(name || "")
+    .replace(/§./g, "") // strip MC formatting codes just in case
+    .replace(TRAILING_STARS_AND_MASTER_RE, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+// ✅ One canonical base-name function used everywhere for keys
+function baseItemName(name) {
+  // normalize weird digits first so signatures don’t drift
+  const s = normalizeWeirdDigits(String(name || ""));
+  return stripStarsAndMasterGlyphs(s);
 }
 
 // normalize itemName for signature parsing (circle-stars -> ✪, weird digits -> ascii)
 function normalizeNameForSignature(itemName) {
   let s = String(itemName || "");
+  s = s.replace(/§./g, "");
   s = normalizeWeirdDigits(s);
   s = s.replace(/[●⬤•○◉◎◍]/g, "✪");
   s = s.replace(/[★☆✯✰]/g, "✪");
@@ -114,7 +144,7 @@ function itemNameLooksStarred(itemName) {
   const s = String(itemName ?? "");
   if (!s) return false;
   if (/[✪★☆✯✰●⬤•○◉◎◍]/.test(s)) return true;
-  if (/[➊➋➌➍➎➏➐➑➒➓⓪①②③④⑤⑥⑦⑧⑨❶❷❸❹❺❻❼❽❾❿⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉]/.test(s)) return true;
+  if (MASTER_DIGIT_GLYPHS_RE.test(s)) return true;
   return false;
 }
 
@@ -146,7 +176,7 @@ async function upsertAuctionsBulk(list, now) {
     if (!uuid) continue;
 
     const itemName = a.item_name || "";
-    const itemKey = canonicalItemKey(stripStarGlyphs(itemName)) || null;
+    const itemKey = canonicalItemKey(baseItemName(itemName)) || null;
 
     const bin = !!a.bin;
     const start_ts = Number(a.start || 0);
@@ -343,7 +373,7 @@ async function finalizeEnded(now) {
     for (const r of rows) {
       const price = Number(r.bin ? r.starting_bid : r.highest_bid) || 0;
 
-      const itemKey = r.item_key || canonicalItemKey(stripStarGlyphs(r.item_name || "")) || null;
+      const fixedKey = r.item_key || canonicalItemKey(baseItemName(r.item_name || "")) || null;
 
       const shouldBuildSig =
         !!r.signature ||
@@ -365,7 +395,7 @@ async function finalizeEnded(now) {
       await client.query(upsertSaleSql, [
         r.uuid,
         r.item_name || "",
-        itemKey,
+        fixedKey,
         !!r.bin,
         price,
         Number(r.end_ts || 0),
@@ -409,7 +439,7 @@ async function backfillSalesItemKeys({ batch = SALES_KEY_BACKFILL_BATCH } = {}) 
 
     let updated = 0;
     for (const r of rows) {
-      const k = canonicalItemKey(stripStarGlyphs(r.item_name || ""));
+      const k = canonicalItemKey(baseItemName(r.item_name || ""));
       if (!k) continue;
       await client.query(upd, [r.uuid, k]);
       updated++;
