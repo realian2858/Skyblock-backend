@@ -536,8 +536,11 @@ app.get("/api/recommend", async (req, res) => {
     const userPetLevel = parseUserPetLevel(req.query.petlvl ?? req.query.petLevel);
     const userPetItem = normalizeFromOptions(req.query.petitem ?? req.query.petItem, PETITEM_OPTIONS);
 
-    const userEnchantsMap = parseEnchantList(req.query.enchants || "");
+    let enchRaw = String(req.query.enchants || "").trim();
+if (/^start typing:/i.test(enchRaw) || enchRaw.includes("→")) enchRaw = "";
+const userEnchantsMap = parseEnchantList(enchRaw);
 
+       
     const filters = { userWI, userRarity, userDye, userSkin, userPetSkin, userPetLevel, userPetItem };
 
     const since = now - 120 * 24 * 60 * 60 * 1000;
@@ -812,4 +815,5 @@ const PORT = Number(process.env.PORT || 8080);
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
+
 
