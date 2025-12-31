@@ -89,14 +89,22 @@ function parseStarsFromName(itemName) {
 }
 
 
+// ✅ Do NOT NFKC before removing dingbat/circled digits
+// NFKC can convert ➊➋➌ into 1 2 3 (which then leaks into item_key).
 function stripVariantDigits(s) {
-  const str = String(s ?? "").normalize("NFKC");
-  const removed = str
-    .replace(OTHER_VARIANT_CHARS_RE, " ")
+  let raw = String(s ?? "");
+
+  // remove known variant chars (stars, bullets, etc) early
+  raw = raw.replace(OTHER_VARIANT_CHARS_RE, " ");
+
+  // remove circled + dingbat digits BEFORE normalization
+  raw = raw
     .split("")
-    .filter((ch) => !CIRCLED_DIGITS.includes(ch) && !DINGBAT_DIGITS.includes(ch))
+    .filter((ch) => !CIRCLED_DIGITS.has(ch) && !DINGBAT_DIGITS.has(ch))
     .join("");
-  return removed;
+
+  // now normalize safely
+  return raw.normalize("NFKC");
 }
 
 
@@ -176,7 +184,11 @@ export function canonicalItemKey(name) {
   while (t.length > 1 && /^\d+$/.test(t[t.length - 1])) t.pop();
 
 
-  return t.join(" ");
+  const out = t.join(" ").trim();
+
+// ✅ absolute safety: never allow trailing numeric suffixes (e.g. "hyperion 2")
+return out.replace(/\s+\d{1,2}$/, "").trim();
+
 }
 
 
@@ -772,3 +784,4 @@ export async function buildSignature({ itemName = "", lore = "", tier = "", item
 
   return [...parts, ...enchTokens].join("|");
 }
+
