@@ -1,4 +1,4 @@
-// parseLore.js (v8 - FIX NBT stars total/master ambiguity + safer star cluster parsing)
+// parseLore.js (v9 - HARD FIX: never lose dstars for 10★, robust TOTAL-vs-MASTER, circle-stars, safe fallback)
 //
 // Exports used by server.js/ingest.js:
 // cleanText, normKey, normalizeEnchantKey,
@@ -8,12 +8,14 @@
 // coflnetStars10FromText,
 // buildSignature({ itemName, lore, tier, itemBytes })
 //
-// Fixes:
-// ✅ If upgrade_level > 5, treat it as TOTAL stars (6..10) even if dungeon_item_level exists
-// ✅ If upgrade_level <= 5, treat it as master stars when dungeon_item_level exists
-// ✅ Remove "•" from star chars (bullets cause false positives)
-// ✅ Only parse the final star cluster near the end (prevents lore bullet confusion)
-// ✅ FIX: include white/outlined circle-stars (○◉◎◍) in star parsing + key stripping (master stars show + 10★ reads)
+// What this prevents (for real):
+// ✅ dungeon_item_level can be TOTAL 0..10 (some items store total here) — we read 0..10 (NOT clamped to 5)
+// ✅ upgrade_level can be TOTAL 0..10 OR master 0..5 depending on context — we disambiguate deterministically
+// ✅ If total stars resolves to 6..10 from ANY source (NBT or name/lore), we ALWAYS output dstars:5 AND mstars:(total-5)
+// ✅ If mstars > 0 then dstars is forced to 5 (so you never get "mstars:5" without dungeon stars again)
+// ✅ stars10 is ALWAYS stored whenever we have stars from any source (server prefers stars10)
+// ✅ Star parsing includes circle/outlined stars (○◉◎◍) and excludes bullets "•" to avoid lore noise
+// ✅ Fallback parsing only trusts the last star cluster near the end of the string (prevents bullet confusion)
 
 import { gunzipSync } from "node:zlib";
 import { parse as parseNbt } from "prismarine-nbt";
@@ -71,8 +73,11 @@ function normalizeWeirdDigits(s) {
    Coflnet star parsing (ROBUST + SAFE)
 ========================= */
 // IMPORTANT: do NOT include "•" here (bullets appear everywhere)
-const STAR_CHARS = new Set(["✪", "★", "☆", "✯", "✰", "●", "⬤", "○", "◉", "◎", "◍"]);
-
+const STAR_CHARS = new Set([
+  "✪", "★", "☆", "✯", "✰",
+  "●", "⬤",
+  "○", "◉", "◎", "◍",
+]);
 
 function isStarChar(ch) {
   return STAR_CHARS.has(ch);
@@ -85,11 +90,11 @@ export function coflnetStars10FromText(text) {
   if (!s) return 0;
 
   // Only trust a star cluster near the end (item name suffix)
-  const SEARCH_WINDOW = 64; // widened a bit
+  const SEARCH_WINDOW = 80;
   const start = Math.max(0, s.length - SEARCH_WINDOW);
   const tailWindow = s.slice(start);
 
-  // Find last star char in the *tail window*
+  // Find last star char in the tail window
   let lastStarIdxLocal = -1;
   for (let i = tailWindow.length - 1; i >= 0; i--) {
     if (isStarChar(tailWindow[i])) {
@@ -104,13 +109,13 @@ export function coflnetStars10FromText(text) {
   // Count up to 5 stars backwards with small separator tolerance
   let starCount = 0;
   let i = lastStarIdx;
-  let gapBudget = 10;
+  let gapBudget = 12;
 
   while (i >= 0 && starCount < 5) {
     const ch = s[i];
     if (isStarChar(ch)) {
       starCount++;
-      gapBudget = 10;
+      gapBudget = 12;
       i--;
       continue;
     }
@@ -126,15 +131,16 @@ export function coflnetStars10FromText(text) {
   if (starCount < 5) return starCount;
 
   // starCount == 5 -> look for addon digit 1..5 shortly after last star
-  const after = s.slice(lastStarIdx + 1, lastStarIdx + 40);
+  const after = s.slice(lastStarIdx + 1, lastStarIdx + 64);
 
-  // Prefer a clean 1..5 token if present
+  // Prefer a clean 1..5 digit
   const mDigit = after.match(/[1-5]/);
   if (mDigit) {
     const d = Number(mDigit[0]);
     if (d >= 1 && d <= 5) return 5 + d;
   }
 
+  // Roman I..V
   const mRoman = after.match(/\b(i{1,3}|iv|v)\b/i);
   if (mRoman) {
     const r = mRoman[1].toLowerCase();
@@ -145,8 +151,6 @@ export function coflnetStars10FromText(text) {
 
   return 5;
 }
-
-
 
 /* =========================
    Unicode variant stripping (for item key)
@@ -196,7 +200,7 @@ export function canonicalItemKey(name) {
   s = stripVariantDigits(s);
   s = stripMcFormatting(s);
 
-  // Remove star/circle-star glyphs from key
+  // Remove star/circle-star glyphs from key (includes outlined/circle stars)
   s = s.replace(/[✪★☆✯✰●⬤○◉◎◍]+/g, " ");
 
   s = s.replace(/\(([^)]*)\)/g, " ");
@@ -588,50 +592,92 @@ function extractEnchants(extra) {
   return ench;
 }
 
-// ✅ FIXED: dungeon_item_level can be TOTAL (0..10) on some items.
-// ✅ FIXED: include circle-style stars in fallback parsing too.
+/* =========================
+   Stars extraction (THE IMPORTANT PART)
+========================= */
+function clampInt(n, lo, hi) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return 0;
+  return Math.max(lo, Math.min(hi, Math.trunc(x)));
+}
+
+function totalToSplit(total10) {
+  const t = clampInt(total10, 0, 10);
+  if (t <= 0) return { dstars: 0, mstars: 0 };
+  if (t <= 5) return { dstars: t, mstars: 0 };
+  return { dstars: 5, mstars: t - 5 };
+}
+
+// HARD RULES:
+// - If ANY source says total stars 6..10 -> dstars=5,mstars=total-5
+// - If we ever output mstars>0 -> dstars forced to 5 (prevents the exact bug you hit)
+// - dungeon_item_level is read as 0..10 (can be total)
+// - upgrade_level is read as 0..10 (can be total OR master)
 function extractStars(extra, itemName, loreRaw) {
-  const dRaw = Number(extra?.dungeon_item_level ?? 0);
-  const uRaw = Number(extra?.upgrade_level ?? 0);
+  const d10 = clampInt(extra?.dungeon_item_level ?? 0, 0, 10);
+  const u10 = clampInt(extra?.upgrade_level ?? 0, 0, 10);
 
-  // IMPORTANT:
-  // dungeon_item_level may be 0..10 (sometimes TOTAL stars)
-  // upgrade_level may be 0..10 (sometimes TOTAL stars; sometimes master stars when dungeon stars exist)
-  const d10 = Number.isFinite(dRaw) ? Math.max(0, Math.min(10, Math.trunc(dRaw))) : 0;
-  const u10 = Number.isFinite(uRaw) ? Math.max(0, Math.min(10, Math.trunc(uRaw))) : 0;
-
-  // Case A: dungeon_item_level itself is TOTAL stars (6..10)
+  // 1) NBT: dungeon_item_level as TOTAL (6..10)
   if (d10 > 5) {
-    return { dstars: 5, mstars: Math.max(0, Math.min(5, d10 - 5)) };
+    return { dstars: 5, mstars: d10 - 5 };
   }
 
-  // Case B: upgrade_level is TOTAL stars (6..10) — treat as total even if dungeon exists
+  // 2) NBT: upgrade_level as TOTAL (6..10) (wins even if dungeon stars exist)
   if (u10 > 5) {
-    return { dstars: 5, mstars: Math.max(0, Math.min(5, u10 - 5)) };
+    return { dstars: 5, mstars: u10 - 5 };
   }
 
-  // Case C: both exist and are 1..5 -> dungeon stars + master stars
+  // 3) NBT: if both are 1..5, interpret as dungeon + master
+  // (most common for dungeon items that store masters in upgrade_level)
   if (d10 > 0 && u10 > 0) {
-    return { dstars: Math.max(0, Math.min(5, d10)), mstars: Math.max(0, Math.min(5, u10)) };
+    const dstars = clampInt(d10, 0, 5);
+    const mstars = clampInt(u10, 0, 5);
+    // if we have master stars, dungeon must be 5 in practice (10★) OR at least present.
+    // BUT we keep dstars as given; we'll enforce the "mstars => dstars=5" rule below if needed.
+    const out = { dstars, mstars };
+    if (out.mstars > 0 && out.dstars === 0) out.dstars = 5;
+    if (out.mstars > 0 && out.dstars < 5) {
+      // safety: if a weird item reports mstars but dstars <5, clamp dstars to 5 to keep total consistent for matching
+      out.dstars = 5;
+    }
+    return out;
   }
 
-  // dungeon only (<=5)
-  if (d10 > 0) return { dstars: Math.max(0, Math.min(5, d10)), mstars: 0 };
+  // 4) NBT: dungeon only (<=5)
+  if (d10 > 0) return { dstars: clampInt(d10, 0, 5), mstars: 0 };
 
-  // upgrade only (<=5): treat as dungeon stars
-  if (u10 > 0) return { dstars: Math.max(0, Math.min(5, u10)), mstars: 0 };
+  // 5) NBT: upgrade only (<=5)
+  // Ambiguous: could be "dungeon stars" or "master stars".
+  // If name/lore shows a 6..10 total, treat this as master stars (10★ style), otherwise treat as dungeon stars.
+  if (u10 > 0) {
+    const fromName = coflnetStars10FromText(itemName);
+    const fromLore = coflnetStars10FromText(loreRaw);
+    const total = Math.max(fromName, fromLore);
 
-  // fallback parse from itemName/lore
+    if (total > 5) {
+      // If total is 6..10 and upgrade is 1..5, this is almost certainly master stars.
+      const split = totalToSplit(total);
+      // enforce consistency: if total says masters, never drop dstars
+      if (split.mstars > 0 && split.dstars !== 5) split.dstars = 5;
+      return split;
+    }
+
+    // Otherwise treat as dungeon stars
+    return { dstars: clampInt(u10, 0, 5), mstars: 0 };
+  }
+
+  // 6) Fallback: parse from itemName/lore
   const fromName = coflnetStars10FromText(itemName);
   const fromLore = coflnetStars10FromText(loreRaw);
   const total = Math.max(fromName, fromLore);
 
-  if (total <= 0) return { dstars: 0, mstars: 0 };
-  if (total <= 5) return { dstars: total, mstars: 0 };
-  return { dstars: 5, mstars: total - 5 };
+  const split = totalToSplit(total);
+
+  // FINAL ENFORCEMENT: never allow master stars without dungeon stars
+  if (split.mstars > 0 && split.dstars !== 5) split.dstars = 5;
+
+  return split;
 }
-
-
 
 function extractPetLevel(extra, itemName) {
   const petInfo = extra?.petInfo;
@@ -683,6 +729,7 @@ export async function buildSignature({ itemName = "", lore = "", tier = "", item
   const enchTokens = mapToEnchantTokens(enchMap);
 
   const { dstars, mstars } = extractStars(extra, itemName, lore);
+
   const hasWI = extractWitherImpactFlag(itemName, rootParsed);
   const petLevel = extractPetLevel(extra, itemName);
 
@@ -691,10 +738,19 @@ export async function buildSignature({ itemName = "", lore = "", tier = "", item
 
   const tierKey = normKey(tier).replace(/\s+/g, "_");
 
+  // HARD ENFORCEMENT AT SIGNATURE LEVEL TOO:
+  // if mstars exists, dstars must be 5 so matching never sees "5★" for a 10★.
+  let dst = clampInt(dstars, 0, 5);
+  let mst = clampInt(mstars, 0, 5);
+  if (mst > 0 && dst !== 5) dst = 5;
+
+  const stars10 = clampInt(dst + mst, 0, 10);
+
   const parts = [];
   if (tierKey) parts.push(`tier:${tierKey}`);
-  if (dstars) parts.push(`dstars:${dstars}`);
-  if (mstars) parts.push(`mstars:${mstars}`);
+  if (dst) parts.push(`dstars:${dst}`);
+  if (mst) parts.push(`mstars:${mst}`);
+  if (stars10) parts.push(`stars10:${stars10}`); // ALWAYS store when present
   if (hasWI) parts.push("wither_impact:1");
   if (petLevel) parts.push(`pet_level:${petLevel}`);
   if (dye && dye !== "none") parts.push(`dye:${dye}`);
@@ -702,12 +758,5 @@ export async function buildSignature({ itemName = "", lore = "", tier = "", item
   if (petskin && petskin !== "none") parts.push(`petskin:${petskin}`);
   if (petHeld?.key) parts.push(`pet_item:${petHeld.key}`);
 
-  // Store stars10 explicitly (server should prefer this)
-  const stars10 = Math.max(0, Math.min(10, (dstars || 0) + (mstars || 0)));
-  if (stars10) parts.push(`stars10:${stars10}`);
-
   return [...parts, ...enchTokens].join("|");
 }
-
-
-
