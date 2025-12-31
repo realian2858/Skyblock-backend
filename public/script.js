@@ -189,15 +189,23 @@ function clampInt(n, lo, hi) {
 }
 
 
-function renderStarsHtml(dungeonStars, masterStars) {
-  const ds = clampInt(dungeonStars, 0, 5);
-  const ms = clampInt(masterStars, 0, 5);
-  if (ds <= 0 && ms <= 0) return "";
+function masterDigitGlyph(n) {
+  const v = Math.max(0, Math.min(5, Number(n) || 0));
+  return v === 0 ? "" : (["", "➊", "➋", "➌", "➍", "➎"][v] || "");
+}
 
-  // Requested display: item name + 5 ✪ + master digit glyph (➊➋➌➍➎)
-  const icons = ds > 0 ? "✪".repeat(ds) : "";
-  const dingbat = ["", "➊", "➋", "➌", "➍", "➎"][ms] || "";
-  return `<span class="sb-stars">${escapeHtml(icons)}</span>${dingbat ? ` <span class="mstar-glyph">${escapeHtml(dingbat)}</span>` : ""}`;
+function renderStarsHtml(dungeonStars, masterStars) {
+  const ds = Math.max(0, Math.min(5, Number(dungeonStars) || 0));
+  const ms = Math.max(0, Math.min(5, Number(masterStars) || 0));
+  const total = Math.max(0, Math.min(10, ds + ms));
+
+  if (total <= 0) return "";
+
+  if (total <= 5) {
+    return `<span class="stars">${"✪".repeat(total)}</span>`;
+  }
+
+  return `<span class="stars">${"✪".repeat(5)}<span class="mstar-digit">${masterDigitGlyph(ms)}</span></span>`;
 }
 
 
@@ -848,8 +856,7 @@ function renderTop3Rail(top3) {
    Advanced output
 ========================= */
 function renderAdvanced(outEl, data) {
-  const recRaw = data?.recommended;
-  const rec = recRaw == null ? null : Number(recRaw);
+  const rec = Number(data?.recommended);
   const rl = Number(data?.range_low);
   const rh = Number(data?.range_high);
   const rc = Number(data?.range_count || 0);
@@ -876,7 +883,7 @@ function renderAdvanced(outEl, data) {
 
   outEl.innerHTML = `
     <div class="out-head">Recommended Price</div>
-    <div class="out-big">${rec != null && isFinite(rec) ? escapeHtml(formatCoins(rec)) : "—"}</div>
+    <div class="out-big">${isFinite(rec) ? escapeHtml(formatCoins(rec)) : "—"}</div>
 
 
     <div class="out-grid">
