@@ -568,6 +568,10 @@ app.get("/api/recommend", async (req, res) => {
     if (!itemKey) {
       return res.json({
         recommended: null,
+        median: null,
+        range_low: null,
+        range_high: null,
+        range_count: 0,
         top3: [],
         count: 0,
         note: "Pick an item from suggestions.",
@@ -575,20 +579,37 @@ app.get("/api/recommend", async (req, res) => {
       });
     }
 
-    const inputStars10 = Math.max(0, Math.min(10, Number(req.query.stars10 ?? req.query.stars ?? 0)));
+    const inputStars10 = Math.max(
+      0,
+      Math.min(10, Number(req.query.stars10 ?? req.query.stars ?? 0))
+    );
+
     const userRarity = normUserKey(req.query.rarity || "");
-    const userWI = String(req.query.wi ?? "") === "1" || String(req.query.wi ?? "") === "true";
+    const userWI =
+      String(req.query.wi ?? "") === "1" || String(req.query.wi ?? "") === "true";
 
     const userDye = normalizeFromOptions(req.query.dye, DYE_OPTIONS);
     const userSkin = normalizeFromOptions(req.query.skin, SKIN_OPTIONS);
-    const userPetSkin = normalizeFromOptions(req.query.petskin ?? req.query.petSkin, PETSKIN_OPTIONS);
+    const userPetSkin = normalizeFromOptions(
+      req.query.petskin ?? req.query.petSkin,
+      PETSKIN_OPTIONS
+    );
     const userPetLevel = parseUserPetLevel(req.query.petlvl ?? req.query.petLevel);
-    const userPetItem = normalizeFromOptions(req.query.petitem ?? req.query.petItem, PETITEM_OPTIONS);
+    const userPetItem = normalizeFromOptions(
+      req.query.petitem ?? req.query.petItem,
+      PETITEM_OPTIONS
+    );
 
     const userEnchantsMap = parseEnchantList(req.query.enchants || "");
-
-       
-    const filters = { userWI, userRarity, userDye, userSkin, userPetSkin, userPetLevel, userPetItem };
+    const filters = {
+      userWI,
+      userRarity,
+      userDye,
+      userSkin,
+      userPetSkin,
+      userPetLevel,
+      userPetItem,
+    };
 
     const since = now - 120 * 24 * 60 * 60 * 1000;
 
@@ -605,8 +626,6 @@ app.get("/api/recommend", async (req, res) => {
     );
 
     const candidates = [];
-    const perfectPrices = [];
-    const partialPrices = [];
 
     for (const r of rows) {
       const price = Number(r.final_price || 0);
@@ -617,9 +636,6 @@ app.get("/api/recommend", async (req, res) => {
 
       const q = strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters });
       if (q === "NONE") continue;
-
-      if (q === "PERFECT") perfectPrices.push(price);
-      else partialPrices.push(price);
 
       const sc = scoreAfterStrict({ userEnchantsMap, inputStars10, sig, filters });
       if (!sc) continue;
@@ -656,39 +672,116 @@ app.get("/api/recommend", async (req, res) => {
     candidates.sort((a, b) => (b.score - a.score) || (a.final_price - b.final_price));
     const top3 = candidates.slice(0, 3);
 
-    // change ONLY this block inside /api/recommend (after candidates/top3 are computed)
+    /* =========================
+       Recommended price (TOP 10 ALWAYS)
+    ========================= */
+    const top10 = candidates.slice(0, 10);
 
-/* =========================
-   Recommended price (TOP 10 ALWAYS)
-========================= */
-const top10 = candidates.slice(0, 10);
+    const top10Perfect = top10
+      .filter((x) => x.quality === "PERFECT")
+      .map((x) => x.final_price);
 
-const top10Perfect = top10
-  .filter((x) => x.quality === "PERFECT")
-  .map((x) => x.final_price);
+    const top10Partial = top10
+      .filter((x) => x.quality === "PARTIAL")
+      .map((x) => x.final_price);
 
-const top10Partial = top10
-  .filter((x) => x.quality === "PARTIAL")
-  .map((x) => x.final_price);
+    const pricePool = top10Perfect.length ? top10Perfect : top10Partial;
 
-const pricePool = top10Perfect.length ? top10Perfect : top10Partial;
+    const med = pricePool.length ? median(pricePool) : null;
+    const rangeLow = pricePool.length ? Math.min(...pricePool) : null;
+    const rangeHigh = pricePool.length ? Math.max(...pricePool) : null;
 
-const med = pricePool.length ? median(pricePool) : null;
-const rangeLow = pricePool.length ? Math.min(...pricePool) : null;
-const rangeHigh = pricePool.length ? Math.max(...pricePool) : null;
+    /* =========================
+       LIVE BIN (LBIN)
+    ========================= */
+    const { rows: liveRows } = await pool.query(
+      `
+      SELECT uuid, item_name, item_key, bin, start_ts, end_ts, starting_bid,
+             tier, signature, item_lore, item_bytes, last_seen_ts
+      FROM auctions
+      WHERE is_ended = false
+        AND bin = true
+        AND (item_key ILIKE ('%' || $1 || '%') OR item_name ILIKE ('%' || $1 || '%'))
+        AND last_seen_ts >= $2
+      ORDER BY starting_bid ASC
+      LIMIT 3000
+      `,
+      [itemKey, now - 10 * 60 * 1000]
+    );
 
-// keep response fields the same:
-return res.json({
-  recommended: med,
-  median: med,
-  range_low: rangeLow,
-  range_high: rangeHigh,
-  range_count: pricePool.length, // will now be <= 10 always
-  count: candidates.length,
-  note,
-  top3,
-  live: liveBest,
+    let bestPerfect = null;
+    let bestPartial = null;
+
+    for (const a of liveRows) {
+      const price = Number(a.starting_bid || 0);
+      if (!Number.isFinite(price) || price <= 0) continue;
+
+      const aKey = canonicalItemKey(a.item_key || a.item_name || "");
+      if (aKey !== itemKey) continue;
+
+      let sig = String(a.signature || "").trim();
+      if (!sig) {
+        sig = String(
+          (await buildSignature({
+            itemName: a.item_name || "",
+            lore: a.item_lore || "",
+            tier: a.tier || "",
+            itemBytes: a.item_bytes || "",
+          })) || ""
+        ).trim();
+      }
+      if (!sig) continue;
+
+      const q = strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters });
+      if (q === "NONE") continue;
+
+      const sc = scoreAfterStrict({ userEnchantsMap, inputStars10, sig, filters });
+      if (!sc) continue;
+
+      const cand = {
+        uuid: a.uuid,
+        item_name: stripStarGlyphs(a.item_name),
+        price,
+        bin: true,
+        signature: sig,
+        dstars: sigDungeonStars(sig),
+        mstars: sigMasterStars(sig),
+        stars10: sigStars10(sig),
+        petItem: sigPetItem(sig),
+        score: sc.score,
+        matched: sc.matched,
+        quality: q,
+      };
+
+      if (q === "PERFECT") {
+        if (!bestPerfect || cand.price < bestPerfect.price) bestPerfect = cand;
+      } else {
+        if (!bestPartial || cand.price < bestPartial.price) bestPartial = cand;
+      }
+    }
+
+    const liveBest = bestPerfect || bestPartial || null;
+
+    const note = candidates.length
+      ? null
+      : "No sales found that match (diff>=2 is excluded) within the selected history window.";
+
+    return res.json({
+      recommended: med,
+      median: med,
+      range_low: rangeLow,
+      range_high: rangeHigh,
+      range_count: pricePool.length, // <= 10 always
+      count: candidates.length,
+      note,
+      top3,
+      live: liveBest,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
+
 
 
     /* =========================
@@ -897,4 +990,5 @@ const PORT = Number(process.env.PORT || 8080);
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
+
 
