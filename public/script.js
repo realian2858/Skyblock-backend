@@ -194,22 +194,10 @@ function renderStarsHtml(dungeonStars, masterStars) {
   const ms = clampInt(masterStars, 0, 5);
   if (ds <= 0 && ms <= 0) return "";
 
-  // Desired display:
-  //   Withered Dark Claymore ✪✪✪✪✪➍  (5 dungeon stars + 4 master stars)
-  const masterGlyph = (n) => {
-    switch (Number(n) || 0) {
-      case 1: return "➊";
-      case 2: return "➋";
-      case 3: return "➌";
-      case 4: return "➍";
-      case 5: return "➎";
-      default: return "";
-    }
-  };
-
-  const icons = "✪".repeat(ds);
-  const mg = ms > 0 ? `<span class="mstar-num">${escapeHtml(masterGlyph(ms))}</span>` : "";
-  return `<span class="sb-stars">${escapeHtml(icons)}</span>${mg ? " " + mg : ""}`;
+  // Requested display: item name + 5 ✪ + master digit glyph (➊➋➌➍➎)
+  const icons = ds > 0 ? "✪".repeat(ds) : "";
+  const dingbat = ["", "➊", "➋", "➌", "➍", "➎"][ms] || "";
+  return `<span class="sb-stars">${escapeHtml(icons)}</span>${dingbat ? ` <span class="mstar-glyph">${escapeHtml(dingbat)}</span>` : ""}`;
 }
 
 
@@ -860,7 +848,8 @@ function renderTop3Rail(top3) {
    Advanced output
 ========================= */
 function renderAdvanced(outEl, data) {
-  const rec = Number(data?.recommended);
+  const recRaw = data?.recommended;
+  const rec = recRaw == null ? null : Number(recRaw);
   const rl = Number(data?.range_low);
   const rh = Number(data?.range_high);
   const rc = Number(data?.range_count || 0);
@@ -887,7 +876,7 @@ function renderAdvanced(outEl, data) {
 
   outEl.innerHTML = `
     <div class="out-head">Recommended Price</div>
-    <div class="out-big">${isFinite(rec) ? escapeHtml(formatCoins(rec)) : "—"}</div>
+    <div class="out-big">${rec != null && isFinite(rec) ? escapeHtml(formatCoins(rec)) : "—"}</div>
 
 
     <div class="out-grid">
