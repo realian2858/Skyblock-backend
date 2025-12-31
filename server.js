@@ -440,9 +440,14 @@ function strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters }) {
     if (!saleLvl) return "NONE";
 
 
-    const diff = Math.abs(saleLvl - inL);
-    if (diff === 1) anyPartial = true;
-    else if (diff >= 2) return "NONE";
+    const inTier = tierFor(nameKey, inL);
+    const saTier = tierFor(nameKey, saleLvl);
+    if (!inTier || !saTier || inTier === "MISC" || saTier === "MISC") return "NONE";
+
+
+    const lvlDiff = Math.abs(saleLvl - inL);
+    if (lvlDiff === 1) anyPartial = true;
+    else if (lvlDiff >= 2) return "NONE";
   }
 
 
@@ -518,12 +523,15 @@ function scorePartial({ userEnchantsMap, inputStars10, sig, filters }) {
 
     const inTier = tierFor(nameKey, inL);
     const saTier = tierFor(nameKey, saleLvl);
-    if (!inTier || !saTier) continue;
+    if (!inTier || !saTier || inTier === "MISC" || saTier === "MISC") continue;
 
-    const diff = Math.abs(saleLvl - inL);
+
+    const diff = Math.abs(tierRank(saTier) - tierRank(inTier));
+
 
     let tierLabel = "MISC";
     let add = 0;
+
 
     if (diff === 0) {
       tierLabel = inTier;
@@ -532,9 +540,11 @@ function scorePartial({ userEnchantsMap, inputStars10, sig, filters }) {
       tierLabel = "PARTIAL";
       add = 1.0;
     } else {
-      // diff >= 2 => NO SCORE (and don't display a misleading key pill)
-      continue;
+      tierLabel = "MISC";
+      add = 0;
     }
+
+
     add *= 1 + Math.min(10, Math.max(0, inL - 1)) * 0.08;
 
 
