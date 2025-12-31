@@ -52,16 +52,53 @@ function stripStarGlyphs(s) {
 }
 
 /* =========================
+   Tiny color-strip (for star parsing from name)
+========================= */
+function stripColorCodes(s) {
+  // Minecraft formatting codes like §a, §l, etc.
+  return String(s || "").replace(/§./g, "");
+}
+
+/* =========================
    LBIN fallback sig (ONLY for LBIN)
 ========================= */
 const NAME_STAR_RE = /([✪★☆✯✰⭐]{1,10})\s*$/u;
+
+// IMPORTANT: ONLY treat ➊➋➌➍➎ as master stars (ignore circled digits)
 const MASTER_DIGIT_MAP = new Map([
-  ["➊", 1], ["➋", 2], ["➌", 3], ["➍", 4], ["➎", 5],
-  ["①", 1], ["②", 2], ["③", 3], ["④", 4], ["⑤", 5],
+  ["➊", 1],
+  ["➋", 2],
+  ["➌", 3],
+  ["➍", 4],
+  ["➎", 5],
 ]);
 
+function deriveStarsFromName(itemName) {
+  const s = stripColorCodes(itemName);
+
+  // count normal stars (Hypixel commonly uses ✪; include ★⭐ for safety)
+  const starCount = (s.match(/[✪⭐★]/g) || []).length;
+
+  // count master star digits ONLY
+  const mDigitCount = (s.match(/[➊➋➌➍➎]/g) || []).length;
+
+  // Sometimes names contain 10 "✪" total; if >5 and no master digits, treat extras as master
+  let total = starCount;
+  if (starCount > 5 && mDigitCount === 0) total = Math.min(10, starCount);
+
+  // if digits exist, total = min(10, normalStars + masterDigits)
+  if (mDigitCount > 0) total = Math.min(10, Math.min(5, starCount) + mDigitCount);
+
+  const dstars = Math.min(5, total);
+  const mstars = Math.max(0, total - 5);
+
+  if (dstars <= 0 && mstars <= 0) return null;
+  return { total, dstars, mstars };
+}
+
 function parseStarsFromAuctionName(itemName) {
-  const raw = String(itemName || "");
+  // keep this for fallback sig building (end-run)
+  const raw = stripColorCodes(String(itemName || ""));
   const m = raw.match(NAME_STAR_RE);
   if (!m) return null;
 
@@ -93,7 +130,8 @@ function buildLbinFallbackSignature({ itemName = "", tier = "" } = {}) {
   const tierKey = normKey(tier).replace(/\s+/g, "_");
   if (tierKey) parts.push(`tier:${tierKey}`);
 
-  const st = parseStarsFromAuctionName(itemName);
+  // prefer robust deriveStarsFromName; fallback to end-run parser
+  const st = deriveStarsFromName(itemName) || parseStarsFromAuctionName(itemName);
   if (st?.dstars) parts.push(`dstars:${st.dstars}`);
   if (st?.mstars) parts.push(`mstars:${st.mstars}`);
 
@@ -107,7 +145,6 @@ const RESERVED_SIG_KEYS = new Set([
   "tier",
   "dstars",
   "mstars",
-  "stars10", // ✅ prevent "Stars10 10" from appearing as an enchant
   "wither_impact",
   "pet_level",
   "pet_item",
@@ -162,29 +199,17 @@ function sigPetItem(sig) {
 }
 
 /* =========================
-   Enchant catalog + bounds (clamps impossible levels like Dragon Hunter 6)
+   Enchant catalog bounds (prevents impossible levels like Dragon Hunter 6)
 ========================= */
 const ENCHANT_CATALOG = getEnchantCatalog();
-const ENCHANT_CATALOG_NORM = ENCHANT_CATALOG.map((e) => ({
-  name: e.name,
-  key: normKey(e.name),
-  min: e.min,
-  max: e.max,
-}));
-
-const ENCHANT_BOUNDS = new Map(
-  ENCHANT_CATALOG.map((e) => {
-    const k = normalizeEnchantKey(String(e.key ?? e.name ?? ""));
-    return [k, { min: Number(e.min) || 1, max: Number(e.max) || 1 }];
-  })
+const ENCHANT_LEVEL_BOUNDS = new Map(
+  ENCHANT_CATALOG.map((e) => [normalizeEnchantKey(e.name), { min: e.min, max: e.max }])
 );
 
-function clampEnchantLevel(nameKey, lvl) {
-  const b = ENCHANT_BOUNDS.get(nameKey);
-  if (!b) return lvl;
-  const n = Number(lvl);
-  if (!Number.isFinite(n)) return lvl;
-  return Math.max(b.min, Math.min(b.max, n));
+function isValidEnchantLevel(nameKey, lv) {
+  const b = ENCHANT_LEVEL_BOUNDS.get(nameKey);
+  if (!b) return false;
+  return Number.isFinite(lv) && lv >= b.min && lv <= b.max;
 }
 
 function sigEnchantMap(sig) {
@@ -200,20 +225,44 @@ function sigEnchantMap(sig) {
 
     if (RESERVED_SIG_KEYS.has(kRaw)) continue;
 
-    let lv = Number(vRaw);
+    const lv = Number(vRaw);
     if (!Number.isFinite(lv) || lv <= 0) continue;
 
     const nameKey = normalizeEnchantKey(String(kRaw).replace(/_/g, " "));
     if (!nameKey) continue;
 
-    // ✅ clamp to known max (kills Dragon Hunter 6, etc)
-    lv = clampEnchantLevel(nameKey, lv);
+    // ✅ Drop impossible levels based on your catalog
+    if (!isValidEnchantLevel(nameKey, lv)) continue;
 
     const prev = out.get(nameKey);
     if (!prev || lv > prev) out.set(nameKey, lv);
   }
 
   return out;
+}
+
+/* =========================
+   Enchant display ordering (AAA -> AA -> A -> B -> BB -> MISC)
+========================= */
+function tierRank(t) {
+  const k = String(t || "").toUpperCase();
+  if (k === "AAA") return 0;
+  if (k === "AA") return 1;
+  if (k === "A") return 2;
+  if (k === "B") return 3;
+  if (k === "BB") return 4;
+  if (k === "PARTIAL") return 5;
+  return 6; // MISC / unknown last
+}
+
+function sortEnchantsForDisplay(list) {
+  // list items: { tier, label }
+  return (list || []).slice().sort((a, b) => {
+    const ra = tierRank(a?.tier);
+    const rb = tierRank(b?.tier);
+    if (ra !== rb) return ra - rb;
+    return String(a?.label || "").localeCompare(String(b?.label || ""));
+  });
 }
 
 /* =========================
@@ -567,10 +616,10 @@ function scoreAfterStrict({ userEnchantsMap, inputStars10, sig, filters }) {
     let tierLabel, add;
 
     if (diff === 0) {
-      tierLabel = inTier;                     // gold uses real tier (AAA/AA/A/B/BB)
+      tierLabel = inTier; // gold uses real tier (AAA/AA/A/B/BB)
       add = tierBonusForTier(inTier) + 1.2;
     } else {
-      tierLabel = "PARTIAL";                  // purple
+      tierLabel = "PARTIAL"; // purple
       add = tierBonusForTier("PARTIAL");
     }
 
@@ -583,15 +632,6 @@ function scoreAfterStrict({ userEnchantsMap, inputStars10, sig, filters }) {
 
   matched.sort((a, b) => (b.add ?? 0) - (a.add ?? 0));
   return { score, matched, saleEnchants, unverifiable: vf.unverifiable };
-}
-
-/* =========================
-   Enchant display ordering (AAA -> AA -> A -> B -> BB -> MISC)
-========================= */
-const TIER_ORDER = { AAA: 0, AA: 1, A: 2, B: 3, BB: 4, PARTIAL: 5, MISC: 9 };
-function tierRank(t) {
-  const k = String(t || "").toUpperCase();
-  return TIER_ORDER[k] ?? 9;
 }
 
 /* =========================
@@ -681,6 +721,11 @@ app.get("/api/recommend", async (req, res) => {
       const sc = scoreAfterStrict({ userEnchantsMap, inputStars10, sig, filters });
       if (!sc) continue;
 
+      const allEnchantsRaw = Array.from(sc.saleEnchants.entries()).map(([k, v]) => ({
+        tier: tierFor(k, v),
+        label: displayEnchant(k, v),
+      }));
+
       candidates.push({
         uuid: r.uuid,
         item_name: stripStarGlyphs(r.item_name),
@@ -701,12 +746,7 @@ app.get("/api/recommend", async (req, res) => {
 
         score: sc.score,
         matched: sc.matched,
-        allEnchants: Array.from(sc.saleEnchants.entries())
-          .map(([k, v]) => {
-            const tier = tierFor(k, v);
-            return { tier, label: displayEnchant(k, v) };
-          })
-          .sort((a, b) => (tierRank(a.tier) - tierRank(b.tier)) || a.label.localeCompare(b.label)),
+        allEnchants: sortEnchantsForDisplay(allEnchantsRaw),
         unverifiable: sc.unverifiable,
         quality: q,
       });
@@ -752,7 +792,7 @@ app.get("/api/recommend", async (req, res) => {
       FROM auctions
       WHERE is_ended = false
         AND bin = true
-        AND (item_key ILIKE ('%' || $1 || '%') OR item_name ILIKE ('%' || $1 || '%'))
+        AND item_key = $1
         AND last_seen_ts >= $2
       ORDER BY starting_bid ASC
       LIMIT 3000
@@ -767,8 +807,8 @@ app.get("/api/recommend", async (req, res) => {
       const price = Number(a.starting_bid || 0);
       if (!Number.isFinite(price) || price <= 0) continue;
 
-      const aKey = canonicalItemKey(a.item_key || a.item_name || "");
-      if (aKey !== itemKey) continue;
+      // We already query exact item_key = $1, keep this lightweight
+      // (no canonical re-check needed)
 
       let sig = String(a.signature || "").trim();
       if (!sig) {
@@ -782,8 +822,12 @@ app.get("/api/recommend", async (req, res) => {
         ).trim();
       }
 
-      // ✅ LBIN fallback signature if bytes/lore not present
+      // ✅ Critical LBIN fix:
+      // If signature still missing, build a *stars/tier only* fallback signature from the NAME.
+      // This allows star filtering + rarity filtering (tier) to work for live BINs.
       if (!sig) sig = buildLbinFallbackSignature({ itemName: a.item_name || "", tier: a.tier || "" });
+
+      // If still empty, skip.
       if (!sig) continue;
 
       const q = strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters });
@@ -792,18 +836,35 @@ app.get("/api/recommend", async (req, res) => {
       const sc = scoreAfterStrict({ userEnchantsMap, inputStars10, sig, filters });
       if (!sc) continue;
 
+      // ✅ Fix false [M#] tags for LIVE rows by trusting glyph-derived stars when present.
+      const derived = deriveStarsFromName(a.item_name || "");
+      const shownDstars = derived ? derived.dstars : sigDungeonStars(sig);
+      const shownMstars = derived ? derived.mstars : sigMasterStars(sig);
+      const shownStars10 = Math.max(0, Math.min(10, (shownDstars || 0) + (shownMstars || 0)));
+
+      const allEnchantsRaw = Array.from(sc.saleEnchants.entries()).map(([k, v]) => ({
+        tier: tierFor(k, v),
+        label: displayEnchant(k, v),
+      }));
+
       const cand = {
         uuid: a.uuid,
         item_name: stripStarGlyphs(a.item_name),
         price,
         bin: true,
         signature: sig,
-        dstars: sigDungeonStars(sig),
-        mstars: sigMasterStars(sig),
-        stars10: sigStars10(sig),
+
+        dstars: shownDstars,
+        mstars: shownMstars,
+        stars10: shownStars10,
+
         petItem: sigPetItem(sig),
         score: sc.score,
         matched: sc.matched,
+
+        // ✅ Include full enchants for LIVE cards too (and sort by tier priority)
+        allEnchants: sortEnchantsForDisplay(allEnchantsRaw),
+
         quality: q,
       };
 
@@ -894,6 +955,13 @@ app.get("/api/items", async (req, res) => {
 /* =========================
    Enchant autocomplete
 ========================= */
+const ENCHANT_CATALOG_NORM = ENCHANT_CATALOG.map((e) => ({
+  name: e.name,
+  key: normKey(e.name),
+  min: e.min,
+  max: e.max,
+}));
+
 app.get("/api/enchants", (req, res) => {
   const q = normKey(req.query.q || "");
   const LIMIT = Math.max(5, Math.min(60, Number(req.query.limit || 30)));
