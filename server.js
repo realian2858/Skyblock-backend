@@ -444,13 +444,10 @@ function strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters }) {
     const saTier = tierFor(nameKey, saleLvl);
     if (!inTier || !saTier || inTier === "MISC" || saTier === "MISC") return "NONE";
 
-    // Enchant LEVEL strictness:
-    //   diff 0 -> perfect
-    //   diff 1 -> partial (purple)
-    //   diff >=2 -> reject
-    const lvlDiff = Math.abs(saleLvl - inL);
-    if (lvlDiff === 1) anyPartial = true;
-    else if (lvlDiff >= 2) return "NONE";
+
+    const diff = Math.abs(tierRank(saTier) - tierRank(inTier));
+    if (diff === 1) anyPartial = true;
+    else if (diff >= 2) return "NONE";
   }
 
 
@@ -529,28 +526,28 @@ function scorePartial({ userEnchantsMap, inputStars10, sig, filters }) {
     if (!inTier || !saTier || inTier === "MISC" || saTier === "MISC") continue;
 
 
-    // Enchant LEVEL scoring:
-    //   diff 0 -> normal tier bonus
-    //   diff 1 -> PARTIAL (purple) + small score
-    //   diff >=2 -> no score / not counted
-    const lvlDiff = Math.abs(saleLvl - inL);
-    if (lvlDiff >= 2) continue;
+    const diff = Math.abs(tierRank(saTier) - tierRank(inTier));
+
 
     let tierLabel = "MISC";
     let add = 0;
 
-    if (lvlDiff === 0) {
+
+    if (diff === 0) {
       tierLabel = inTier;
       add = tierBonusForTier(inTier) + 1.2;
-    } else if (lvlDiff === 1) {
+    } else if (diff === 1) {
       tierLabel = "PARTIAL";
       add = 1.0;
+    } else {
+      tierLabel = "MISC";
+      add = 0;
     }
 
-    // small scaling by requested level so high-level ultimates matter more
+
     add *= 1 + Math.min(10, Math.max(0, inL - 1)) * 0.08;
 
-    if (add <= 0) continue;
+
     score += add;
     matched.push({ enchant: { tier: tierLabel, label: displayEnchant(nameKey, inL) }, add });
   }
@@ -699,10 +696,11 @@ app.get("/api/recommend", async (req, res) => {
         AND bin = true
         AND item_key = $1
         AND last_seen_ts >= $2
+        AND end_ts > $3
       ORDER BY starting_bid ASC
       LIMIT 3000
       `,
-      [itemKey, now - 10 * 60 * 1000]
+      [itemKey, now - 30 * 60 * 1000, now]
     );
 
 
