@@ -82,7 +82,7 @@ function tokenize(s) {
 
 function stripReforgePrefixTokens(tokens) {
   const t = Array.isArray(tokens) ? tokens.slice() : tokenize(tokens);
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 2; i++) {
     if (t.length > 1 && REFORGE_PREFIXES.has(t[0])) t.shift();
     else break;
   }
@@ -98,9 +98,6 @@ export function canonicalItemKey(name) {
   s = stripVariantDigits(s);
   s = s.replace(/§./g, "");
   s = s.replace(/[✪★☆✯✰]+/g, " ");
-
-  // strip odd prefix glyphs (⚚, ★, etc) that sometimes appear before reforges
-  s = s.replace(/[^\p{L}\p{N}\s\'-]/gu, " ");
 
   s = s.replace(/\(([^)]*)\)/g, " ");
   s = s.replace(/\[([^\]]*)\]/g, " ");
@@ -333,26 +330,26 @@ export function tierFor(nameKey, lvl) {
   return levels.get(n) ?? "MISC";
 }
 
-/* =========================
-   Enchant catalog (single source of truth)
-   - Used by server for autocomplete / tier labels
-========================= */
+/**
+ * Build an enchant autocomplete catalog directly from ENCHANT_TIER_MAP.
+ * Keeps tiers aligned with strict matching logic.
+ */
 export function getEnchantCatalog() {
   const out = [];
-  for (const [nameKey, levels] of ENCHANT_TIER_MAP.entries()) {
-    let maxLevel = 0;
-    const tierByLevel = {};
-    for (const [lv, tier] of levels.entries()) {
-      const n = Number(lv);
-      if (Number.isFinite(n)) maxLevel = Math.max(maxLevel, n);
-      tierByLevel[String(lv)] = String(tier);
-    }
-    out.push({ nameKey, maxLevel, tierByLevel });
+  for (const [key, levels] of ENCHANT_TIER_MAP.entries()) {
+    const lvls = Array.from(levels.keys()).map(Number).filter((n)=>Number.isFinite(n)).sort((a,b)=>a-b);
+    if (!lvls.length) continue;
+    out.push({ name: displayEnchantName(key), key, min: lvls[0], max: lvls[lvls.length-1] });
   }
-  out.sort((a, b) => a.nameKey.localeCompare(b.nameKey));
+  out.sort((a,b)=>a.name.localeCompare(b.name));
   return out;
 }
 
+function displayEnchantName(nameKey) {
+  // Turn normalized key back into a readable label (best-effort)
+  const s = String(nameKey || "").replace(/_/g, " ");
+  return s.replace(/\w/g, (c) => c.toUpperCase());
+}
 
 /* =========================
    Signature build helpers
