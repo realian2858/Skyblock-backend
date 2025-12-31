@@ -113,7 +113,7 @@ body{
 .browse{
   margin-bottom:12px;
   border-radius:12px;
-  overflow:visible;
+  overflow:hidden;
   box-shadow: var(--shadow);
   border:1px solid rgba(255,255,255,.06);
 }
@@ -366,20 +366,19 @@ select option{
 /* =========================
     Suggestions dropdown
 ========================= */
-.suggest-wrap{ position:relative; overflow: visible; }
+.suggest-wrap{ position:relative; }
 .mod-suggest{
   position:absolute;
   left:0; right:0;
   margin-top:8px;
   border-radius:14px;
   border:1px solid rgba(255,255,255,.12);
-  background: rgba(10,14,22,1);
+  background: rgba(10,14,22,.98);
   backdrop-filter: blur(10px);
   box-shadow: var(--shadow);
   max-height:240px;
   overflow:auto;
-  z-index:99999;
-  pointer-events:auto;
+  z-index:1000;
   display: none;
 }
 .mod-suggest .item{
@@ -860,3 +859,7 @@ select option{
   background: var(--accent);
   color: white;
 }
+
+
+/* stars numeric display (e.g., 3(2)) */
+.stars-num{ font-weight:600; opacity:.9; }
