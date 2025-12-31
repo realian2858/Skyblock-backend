@@ -52,6 +52,55 @@ function stripStarGlyphs(s) {
 }
 
 /* =========================
+   LBIN fallback sig (ONLY for LBIN)
+========================= */
+const NAME_STAR_RE = /([✪★☆✯✰⭐]{1,10})\s*$/u;
+const MASTER_DIGIT_MAP = new Map([
+  ["➊", 1], ["➋", 2], ["➌", 3], ["➍", 4], ["➎", 5],
+  ["①", 1], ["②", 2], ["③", 3], ["④", 4], ["⑤", 5],
+]);
+
+function parseStarsFromAuctionName(itemName) {
+  const raw = String(itemName || "");
+  const m = raw.match(NAME_STAR_RE);
+  if (!m) return null;
+
+  const starRun = m[1] || "";
+  const starCount = starRun.length;
+
+  let mstars = 0;
+  for (const [ch, n] of MASTER_DIGIT_MAP.entries()) {
+    if (raw.includes(ch)) mstars = Math.max(mstars, n);
+  }
+
+  const total = Math.min(10, starCount);
+  let dstars = Math.min(5, total);
+
+  if (mstars > 0) {
+    dstars = Math.min(5, starCount);
+    mstars = Math.min(5, mstars);
+  } else {
+    mstars = Math.max(0, total - 5);
+  }
+
+  if (dstars <= 0 && mstars <= 0) return null;
+  return { dstars, mstars };
+}
+
+function buildLbinFallbackSignature({ itemName = "", tier = "" } = {}) {
+  const parts = [];
+
+  const tierKey = normKey(tier).replace(/\s+/g, "_");
+  if (tierKey) parts.push(`tier:${tierKey}`);
+
+  const st = parseStarsFromAuctionName(itemName);
+  if (st?.dstars) parts.push(`dstars:${st.dstars}`);
+  if (st?.mstars) parts.push(`mstars:${st.mstars}`);
+
+  return parts.join("|").trim();
+}
+
+/* =========================
    Signature helpers
 ========================= */
 const RESERVED_SIG_KEYS = new Set([
@@ -637,8 +686,7 @@ app.get("/api/recommend", async (req, res) => {
       const price = Number(a.starting_bid || 0);
       if (!Number.isFinite(price) || price <= 0) continue;
       const aKey = canonicalItemKey(a.item_key || a.item_name || "");
-if (aKey !== itemKey) continue;
-
+      if (aKey !== itemKey) continue;
 
       let sig = String(a.signature || "").trim();
       if (!sig) {
@@ -651,7 +699,9 @@ if (aKey !== itemKey) continue;
           })) || ""
         ).trim();
       }
-      if (!sig) continue;
+
+      // LBIN fallback: allow star-based matching even when bytes/lore are missing
+      if (!sig) sig = buildLbinFallbackSignature({ itemName: a.item_name || "", tier: a.tier || "" });
 
       const q = strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters });
       if (q === "NONE") continue;
@@ -817,8 +867,3 @@ const PORT = Number(process.env.PORT || 8080);
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
-
-
-
-
-
