@@ -1,4 +1,4 @@
-// public/script.js (v8 - FIX: autocomplete diagnostics + res.ok guards + stale-request protection everywhere)
+// public/script.js (v9 - FIX: advBtn wired + comment fixed + UUID copy works)
 
 function $(id) { return document.getElementById(id); }
 
@@ -19,17 +19,11 @@ const PET_ITEM_LIST = [
 ];
 
 /* =========================
-   Diagnostics (NEW)
+   Diagnostics
 ========================= */
 const AUTO_DEBUG = true;
-
-function dbg(...args) {
-  if (!AUTO_DEBUG) return;
-  console.log("[auto]", ...args);
-}
-function warn(...args) {
-  console.warn("[auto]", ...args);
-}
+function dbg(...args) { if (AUTO_DEBUG) console.log("[auto]", ...args); }
+function warn(...args) { console.warn("[auto]", ...args); }
 
 // Safe JSON fetch that never throws on HTML error pages
 async function safeFetchJson(url, opts) {
@@ -42,17 +36,11 @@ async function safeFetchJson(url, opts) {
   }
 
   let text = "";
-  try {
-    text = await res.text();
-  } catch {
-    return { ok: res.ok, status: res.status, data: null };
-  }
+  try { text = await res.text(); } catch { return { ok: res.ok, status: res.status, data: null }; }
 
   let data = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    // Server returned HTML or plaintext (common on Cloud Run errors)
+  try { data = text ? JSON.parse(text) : null; }
+  catch {
     if (!res.ok) warn("Non-JSON error response:", url, "status", res.status, "body_head", text.slice(0, 120));
     return { ok: res.ok, status: res.status, data: null };
   }
@@ -177,7 +165,7 @@ function updateWIVisibility() {
 }
 
 /* =========================
-   Stars rendering (COFLNET)
+   Stars rendering
 ========================= */
 function clampInt(n, lo, hi) {
   const x = Math.trunc(Number(n) || 0);
@@ -217,7 +205,7 @@ function renderStarsHtmlFromObj(obj) {
 }
 
 /* =========================
-   Enchant rendering (unchanged)
+   Enchant rendering
 ========================= */
 function normalizeTier(t) {
   const u = String(t || "").toUpperCase().trim();
@@ -258,7 +246,7 @@ function enchantInlineHtml(raw) {
 }
 
 /* =========================
-   Clipboard UUID (unchanged)
+   Clipboard UUID
 ========================= */
 async function copyTextToClipboard(text) {
   const t = String(text || "");
@@ -304,7 +292,7 @@ function setUuidBtnState(btn, label, ok) {
 }
 
 /* =========================
-   Tabs / Views (unchanged)
+   Tabs / Views
 ========================= */
 function setView(view) {
   const basics = $("view-basics");
@@ -323,12 +311,11 @@ function setView(view) {
   });
 
   if (activeLabel) activeLabel.textContent = isBasics ? "Basics" : "Advanced";
-
   if (!isBasics) updateWIVisibility();
 }
 
 /* =========================
-   Stars slider (unchanged)
+   Stars slider
 ========================= */
 function setupStars10Slider() {
   const s = $("advStars10");
@@ -343,7 +330,7 @@ function setupStars10Slider() {
 }
 
 /* =========================
-   Server-backed autocomplete (FIXED)
+   Server-backed autocomplete
 ========================= */
 function setupAutocomplete({ inputId, boxId, endpoint, limit = 30, onPick }) {
   const input = $(inputId);
@@ -354,7 +341,6 @@ function setupAutocomplete({ inputId, boxId, endpoint, limit = 30, onPick }) {
   }
 
   box.style.zIndex = "5000";
-
   let timer = null;
   let controller = null;
   let reqSeq = 0;
@@ -420,7 +406,6 @@ function setupAutocomplete({ inputId, boxId, endpoint, limit = 30, onPick }) {
       if (mySeq !== reqSeq) return;
 
       if (!ok) {
-        // show nothing but log why
         warn("Autocomplete endpoint failed:", endpoint, "status", status, "q", q);
         return hide();
       }
@@ -464,7 +449,7 @@ function setupItemAutocomplete() {
 }
 
 /* =========================
-   Local autocomplete (Pet Item) — keeps working even if server endpoints are down
+   Local autocomplete (Pet Item)
 ========================= */
 function setupLocalAutocomplete({ inputId, boxId, list, limit = 30, onPick }) {
   const input = $(inputId);
@@ -475,7 +460,6 @@ function setupLocalAutocomplete({ inputId, boxId, list, limit = 30, onPick }) {
   }
 
   box.style.zIndex = "5000";
-
   let timer = null;
 
   function hide() { box.style.display = "none"; box.innerHTML = ""; }
@@ -534,7 +518,7 @@ function setupLocalAutocomplete({ inputId, boxId, list, limit = 30, onPick }) {
 }
 
 /* =========================
-   Enchant autocomplete (comma segments) — FIX: stale protection + error logs
+   Enchant autocomplete (comma segments)
 ========================= */
 function setupEnchantAutocomplete() {
   const input = $("advEnchants");
@@ -622,7 +606,6 @@ function setupEnchantAutocomplete() {
 
 /* =========================
    Recommend API call + render
-   (unchanged except: leave as-is)
 ========================= */
 async function fetchRecommended({ item, stars10, enchants, wi, rarity, dye, skin, petlvl, petskin, petitem }) {
   const params = new URLSearchParams();
@@ -644,6 +627,8 @@ async function fetchRecommended({ item, stars10, enchants, wi, rarity, dye, skin
 }
 
 /* =========================
+   Advanced render
+========================= */
 function renderTop3Rail(top3) {
   const rail = $("top3Rail");
   if (!rail) return;
@@ -659,11 +644,8 @@ function renderTop3Rail(top3) {
   }
 
   rail.innerHTML = top3.slice(0, 3).map((m, idx) => {
-    // ✅ CLEAN name for display (removes circles/stars/dingbat)
     const rawName = String(m.item_name ?? "—");
     const cleanName = stripStarsFromName(rawName);
-
-    // ✅ derive stars if API didn't give stars10/dstars/mstars
     const derivedStars10 = parseStarsFromName(rawName);
 
     const starsHtml = renderStarsHtmlFromObj({
@@ -797,7 +779,6 @@ async function runAdvancedMode() {
 
   if (!out || !btn || !itemEl || !starsEl || !enchEl) return;
 
-  // ✅ ALWAYS sanitize (even dataset.key can be dirty depending on API)
   const rawPicked = (itemEl.dataset.key || "").trim();
   const rawTyped = (itemEl.value || "").trim();
   const item = stripStarsFromName(rawPicked || rawTyped);
@@ -848,13 +829,10 @@ async function runAdvancedMode() {
   }
 }
 
-
-
 /* =========================
    Wire once
 ========================= */
 document.addEventListener("DOMContentLoaded", async () => {
-  // ✅ Detect obvious ID mismatch immediately
   assertIdsExist([
     "advItem","itemSuggest",
     "advEnchants","enchSuggest",
@@ -862,9 +840,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     "advSkin","skinSuggest",
     "advPetSkin","petSkinSuggest",
     "advPetItem","petItemSuggest",
+    "advBtn","advOut","top3Rail"
   ]);
 
-  // ✅ Quick endpoint sanity check (logs errors but won't block UI)
   const health = await safeFetchJson("/api/health");
   dbg("health:", health.ok ? "ok" : `bad(${health.status})`);
 
@@ -896,5 +874,27 @@ document.addEventListener("DOMContentLoaded", async () => {
     limit: 30,
   });
 
-  dbg("script.js v8 loaded");
+  // ✅ THIS WAS MISSING: button handler
+  $("advBtn")?.addEventListener("click", runAdvancedMode);
+
+  // ✅ Enter key = run
+  ["advItem","advEnchants","advDye","advSkin","advPetItem","advPetLevel","advPetSkin"].forEach((id) => {
+    $(id)?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        runAdvancedMode();
+      }
+    });
+  });
+
+  // ✅ UUID copy handler (you render UUID buttons already)
+  document.addEventListener("click", async (e) => {
+    const btn = e.target.closest(".uuid-copy-btn");
+    if (!btn) return;
+    const uuid = btn.getAttribute("data-uuid") || "";
+    const ok = await copyTextToClipboard(uuid);
+    setUuidBtnState(btn, ok ? "COPIED" : "FAILED", ok);
+  });
+
+  dbg("script.js v9 loaded");
 });
