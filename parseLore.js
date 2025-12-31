@@ -93,8 +93,6 @@ function parseStarsFromName(itemName) {
 const VARIANT_DIGITS_RE = /[\u24EA\u2460-\u2473\u2776-\u277F\u2780-\u2793]/g; 
 // ⓪ + ①..⑳ + dingbat circled digits ➀..➓ + ➊..➓
 
-// keep your existing OTHER_VARIANT_CHARS_RE if you already have it,
-// or use this safe default:
 // keep your existing OTHER_VARIANT_CHARS_RE above (do NOT redeclare it here)
 const BULLET_VARIANT_RE = /[•●]/g;
 
@@ -787,6 +785,3 @@ export async function buildSignature({ itemName = "", lore = "", tier = "", item
 
   return [...parts, ...enchTokens].join("|");
 }
-
-
-
