@@ -646,27 +646,29 @@ function extractEnchants(extra) {
   return ench;
 }
 
+function hasMasterDigitInName(itemName) {
+  const raw = String(itemName || "");
+  return /[➊➋➌➍➎①②③④⑤]/.test(raw);
+}
 
-function extractStars(extra) {
+function extractStars(extra, itemName) {
   const dRaw = Number(extra?.dungeon_item_level ?? 0);
   const uRaw = Number(extra?.upgrade_level ?? 0);
 
   const dFinite = Number.isFinite(dRaw) ? Math.trunc(dRaw) : 0;
   const uFinite = Number.isFinite(uRaw) ? Math.trunc(uRaw) : 0;
 
-  // Hypixel is inconsistent:
-  // - some items store TOTAL stars (0–10) in dungeon_item_level
-  // - some store 0–5 there and use upgrade_level for total (0–10)
-  //
-  // We normalize to:
-  //   dstars: 0–5 (dungeon stars)
-  //   mstars: 0–5 (master stars)
-  //
-  // If dungeon_item_level looks like a total (6–10) and upgrade_level is missing/0,
-  // treat dungeon_item_level as the total.
+  // ✅ If the name does NOT explicitly show a master digit,
+  // we do NOT allow "master stars" inferred from upgrade_level/dungeon_item_level.
+  // This prevents Terminator (etc) randomly becoming [M5].
+  const allowMaster = hasMasterDigitInName(itemName);
+
+  // If dungeon_item_level looks like a total (6–10) and upgrade_level missing:
   if (dFinite > 5 && uFinite <= 0) {
     const total = Math.max(0, Math.min(10, dFinite));
-    return { dstars: Math.min(5, total), mstars: Math.max(0, total - 5) };
+    const dstars = Math.min(5, total);
+    const mstars = allowMaster ? Math.max(0, total - 5) : 0;
+    return { dstars, mstars };
   }
 
   const dstars = Math.max(0, Math.min(5, dFinite));
@@ -674,11 +676,14 @@ function extractStars(extra) {
   // Prefer upgrade_level if present (it represents total 0–10)
   if (uFinite > 0) {
     const total = Math.max(0, Math.min(10, uFinite));
-    return { dstars: Math.min(5, total), mstars: Math.max(0, total - 5) };
+    const d = Math.min(5, total);
+    const m = allowMaster ? Math.max(0, total - 5) : 0;
+    return { dstars: d, mstars: m };
   }
 
   return { dstars, mstars: 0 };
 }
+
 
 
 function extractPetLevel(extra, itemName) {
@@ -785,3 +790,4 @@ export async function buildSignature({ itemName = "", lore = "", tier = "", item
 
   return [...parts, ...enchTokens].join("|");
 }
+
