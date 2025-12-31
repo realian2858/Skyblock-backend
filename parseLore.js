@@ -13,8 +13,10 @@
 //   2) Lore lines: "Held Item: ..." or "Pet Item: ..."
 //   3) (Fallback) nothing => not included (server should treat missing as "unverifiable")
 
+
 import { gunzipSync } from "node:zlib";
 import { parse as parseNbt } from "prismarine-nbt";
+
 
 /* =========================
    Text normalize
@@ -28,6 +30,7 @@ export function cleanText(s) {
   return x;
 }
 
+
 export function normKey(s) {
   return cleanText(s)
     .toLowerCase()
@@ -37,6 +40,7 @@ export function normKey(s) {
     .trim();
 }
 
+
 /* =========================
    Unicode variant stripping
    (Fixes "Dark Claymore ➊" etc)
@@ -45,6 +49,7 @@ const CIRCLED_DIGITS = "⓪①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰�
 const DINGBAT_DIGITS = "➊➋➌➍➎➏➐➑➒➓";
 const OTHER_VARIANT_CHARS_RE =
   /[\u24EA\u2460-\u2473\u24F4-\u24FF\u2776-\u277F\u2780-\u2793\u278A-\u2793]/gu;
+
 
 function stripVariantDigits(s) {
   const str = String(s ?? "").normalize("NFKC");
@@ -56,6 +61,7 @@ function stripVariantDigits(s) {
   return removed;
 }
 
+
 /* =========================
    Reforge stripping
 ========================= */
@@ -64,7 +70,7 @@ const REFORGE_PREFIXES = new Set([
   "hasty","precise","rapid","spiritual","fine","neat","grand","awkward","rich","headstrong","unreal",
   // weapons
   "fabled","withered","heroic","spicy","sharp","legendary","dirty","fanged","suspicious","bulky",
-  "gilded","warped","coldfused","fair","gentle","odd","fast","jerry's",
+  "gilded","warped","coldfused","fair","gentle","odd","fast","jerry's","shiny",
   // armor
   "ancient","giant","perfect","renowned","jaded","loving","necrotic","empowered","spiked","cubic",
   "hyper","submerged","pure","smart","clean","fierce","heavy","light","wise","titanic","mythic","waxed",
@@ -76,18 +82,21 @@ const REFORGE_PREFIXES = new Set([
   "salty","treacherous","sturdy","pitchin'","lucky","aquadynamic","chilly","stiff",
 ]);
 
+
 function tokenize(s) {
   return normKey(s).split(" ").filter(Boolean);
 }
 
+
 function stripReforgePrefixTokens(tokens) {
   const t = Array.isArray(tokens) ? tokens.slice() : tokenize(tokens);
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < 3; i++) {
     if (t.length > 1 && REFORGE_PREFIXES.has(t[0])) t.shift();
     else break;
   }
   return t;
 }
+
 
 /* =========================
    Canonical item key
@@ -95,31 +104,41 @@ function stripReforgePrefixTokens(tokens) {
 export function canonicalItemKey(name) {
   let s = String(name ?? "");
 
+
   s = stripVariantDigits(s);
   s = s.replace(/§./g, "");
   s = s.replace(/[✪★☆✯✰]+/g, " ");
 
+
   s = s.replace(/\(([^)]*)\)/g, " ");
   s = s.replace(/\[([^\]]*)\]/g, " ");
 
+
   s = s.replace(/\b\d+\s*[*★✪]\b/g, " ");
+
 
   s = s.replace(/(\p{L})(\d+)/gu, "$1 $2");
 
+
   let t = tokenize(s);
   if (!t.length) return "";
+
 
   if ((t[0] === "lvl" || t[0] === "lv" || t[0] === "level") && /^\d+$/.test(t[1] || "")) {
     t = t.slice(2);
     if (!t.length) return "";
   }
 
+
   t = stripReforgePrefixTokens(t);
+
 
   while (t.length > 1 && /^\d+$/.test(t[t.length - 1])) t.pop();
 
+
   return t.join(" ");
 }
+
 
 export function canonicalItemDisplay(nameOrKey) {
   const k = canonicalItemKey(nameOrKey);
@@ -129,6 +148,7 @@ export function canonicalItemDisplay(nameOrKey) {
     .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
     .join(" ");
 }
+
 
 /* =========================
    Enchants normalize + parse
@@ -140,6 +160,7 @@ export function normalizeEnchantKey(nameKeyRaw) {
   return k.trim();
 }
 
+
 const ROMAN = new Map([
   ["i", 1], ["ii", 2], ["iii", 3], ["iv", 4], ["v", 5],
   ["vi", 6], ["vii", 7], ["viii", 8], ["ix", 9], ["x", 10],
@@ -147,10 +168,12 @@ const ROMAN = new Map([
   ["xvi", 16], ["xvii", 17], ["xviii", 18], ["xix", 19], ["xx", 20],
 ]);
 
+
 function romanToInt(s) {
   const k = String(s ?? "").toLowerCase().trim();
   return ROMAN.get(k) ?? NaN;
 }
+
 
 export function parseEnchantList(text) {
   const out = new Map();
@@ -159,24 +182,30 @@ export function parseEnchantList(text) {
     .map((s) => s.trim())
     .filter(Boolean);
 
+
   for (const it of items) {
     const raw = cleanText(it);
     const parts = raw.split(/\s+/).filter(Boolean);
     if (parts.length < 2) continue;
+
 
     const lvlTok = parts[parts.length - 1];
     let lvl = Number(lvlTok);
     if (!Number.isFinite(lvl)) lvl = romanToInt(lvlTok);
     if (!Number.isFinite(lvl) || lvl <= 0) continue;
 
+
     const nameKey = normalizeEnchantKey(parts.slice(0, -1).join(" "));
     if (!nameKey) continue;
+
 
     out.set(nameKey, Math.max(out.get(nameKey) || 0, lvl));
   }
 
+
   return out;
 }
+
 
 export function displayEnchant(nameKeyRaw, lvl) {
   const title = normalizeEnchantKey(nameKeyRaw)
@@ -187,10 +216,12 @@ export function displayEnchant(nameKeyRaw, lvl) {
   return `${title} ${Number(lvl)}`;
 }
 
+
 /* =========================
    Enchant tiering (YOUR LIST)
 ========================= */
 const ENCHANT_TIER_MAP = new Map();
+
 
 function addTier(name, tier, levels) {
   const k = normalizeEnchantKey(name);
@@ -200,11 +231,13 @@ function addTier(name, tier, levels) {
   for (const lv of levels) m.set(Number(lv), String(tier).toUpperCase());
 }
 
+
 function addRange(name, tier, lo, hi) {
   const arr = [];
   for (let i = lo; i <= hi; i++) arr.push(i);
   addTier(name, tier, arr);
 }
+
 
 /* AAA */
 addRange("Chimera", "AAA", 3, 5);
@@ -228,6 +261,7 @@ addTier("Efficiency", "AAA", [9, 10]);
 addTier("Champion", "AAA", [9, 10]);
 addTier("Divine Gift", "AAA", [3]);
 
+
 /* AA */
 addRange("Chimera", "AA", 1, 2);
 addTier("Fatal Tempo", "AA", [1]);
@@ -246,6 +280,7 @@ addTier("Flash", "AA", [5]);
 addTier("Champion", "AA", [6, 7, 8]);
 addTier("Divine Gift", "AA", [1, 2]);
 addTier("Cubism", "AA", [6]);
+
 
 /* A */
 addTier("One For All", "A", [1]);
@@ -274,6 +309,7 @@ addTier("Strong Mana", "A", [5]);
 addTier("Ferocious Mana", "A", [5]);
 addTier("Divine Gift", "A", [1]);
 
+
 /* B */
 addTier("Protection", "B", [6]);
 addTier("Sharpness", "B", [6]);
@@ -300,6 +336,7 @@ addTier("Fire Aspect", "B", [3]);
 addTier("Compact", "B", [1, 2, 3, 4]);
 addTier("Expertise", "B", [1, 2, 3, 4]);
 
+
 /* BB */
 addTier("Bank", "BB", [1, 2, 3, 4]);
 addRange("No Pain No Gain", "BB", 1, 5);
@@ -321,6 +358,7 @@ addTier("Critical", "BB", [6]);
 addTier("Ender Slayer", "BB", [6]);
 addTier("Power", "BB", [6]);
 
+
 export function tierFor(nameKey, lvl) {
   const k = normalizeEnchantKey(nameKey);
   const n = Number(lvl);
@@ -329,6 +367,7 @@ export function tierFor(nameKey, lvl) {
   if (!levels) return "MISC";
   return levels.get(n) ?? "MISC";
 }
+
 
 /**
  * Build an enchant autocomplete catalog directly from ENCHANT_TIER_MAP.
@@ -345,11 +384,13 @@ export function getEnchantCatalog() {
   return out;
 }
 
+
 function displayEnchantName(nameKey) {
   // Turn normalized key back into a readable label (best-effort)
   const s = String(nameKey || "").replace(/_/g, " ");
-  return s.replace(/\w/g, (c) => c.toUpperCase());
+  return s.replace(/\w/g, (c) => c.toUpperCase());
 }
+
 
 /* =========================
    Signature build helpers
@@ -358,11 +399,13 @@ function toSigKey(k) {
   return normKey(k).replace(/\s+/g, "_");
 }
 
+
 function mapToEnchantTokens(map) {
   return Array.from(map.entries())
     .sort((a, b) => a[0].localeCompare(b[0]) || b[1] - a[1])
     .map(([k, v]) => `${toSigKey(k)}:${Number(v)}`);
 }
+
 
 /* =========================
    Pet held-item extraction (NEW)
@@ -372,16 +415,20 @@ function canonicalPetItemKey(label) {
   return k || "";
 }
 
+
 function stripMcColors(s) {
   return String(s ?? "").replace(/§./g, "");
 }
+
 
 function parsePetHeldItemFromLore(loreRaw) {
   const lore = String(loreRaw || "");
   const lines = lore.split("\n").map(stripMcColors);
 
+
   for (const rawLine of lines) {
     const line = rawLine.normalize("NFKC").trim();
+
 
     // Match both:
     // "Held Item: Hephaestus Relic"
@@ -389,10 +436,13 @@ function parsePetHeldItemFromLore(loreRaw) {
     let m = line.match(/^(held item|pet item)\s*:\s*(.+)$/i);
     if (!m) m = line.match(/^(held item|pet item)\s+(.+)$/i);
 
+
     if (m) return cleanText(m[2]).trim();
   }
   return "";
 }
+
+
 
 
 function extractPetHeldItem(extra, loreRaw) {
@@ -406,6 +456,7 @@ function extractPetHeldItem(extra, loreRaw) {
     extra?.pet_held_item,
   ];
 
+
   for (const c of candidates) {
     if (typeof c === "string" && c.trim()) {
       // some store "TIER_BOOST" -> normalize nicely
@@ -415,6 +466,7 @@ function extractPetHeldItem(extra, loreRaw) {
     }
   }
 
+
   // Fallback: parse from lore if present
   const loreLabel = parsePetHeldItemFromLore(loreRaw);
   if (loreLabel) {
@@ -422,8 +474,10 @@ function extractPetHeldItem(extra, loreRaw) {
     if (key) return { label: loreLabel, key };
   }
 
+
   return { label: "", key: "" };
 }
+
 
 /* =========================
    NBT parsing (safe)
@@ -432,6 +486,7 @@ async function parseItemBytes(itemBytes) {
   const b64 = String(itemBytes ?? "").trim();
   if (!b64) return null;
 
+
   let buf;
   try {
     buf = Buffer.from(b64, "base64");
@@ -439,12 +494,14 @@ async function parseItemBytes(itemBytes) {
     return null;
   }
 
+
   let nbtBuf;
   try {
     nbtBuf = gunzipSync(buf);
   } catch {
     nbtBuf = buf;
   }
+
 
   try {
     const parsed = await new Promise((resolve) => {
@@ -456,6 +513,7 @@ async function parseItemBytes(itemBytes) {
   }
 }
 
+
 function unwrap(node) {
   if (node == null || typeof node !== "object") return node;
   if ("type" in node && "value" in node) return unwrap(node.value);
@@ -465,20 +523,25 @@ function unwrap(node) {
   return out;
 }
 
+
 function findExtraAttributes(rootParsed) {
   const root = unwrap(rootParsed);
   if (!root || typeof root !== "object") return null;
 
+
   const stack = [root];
   const seen = new Set();
+
 
   while (stack.length) {
     const cur = stack.pop();
     if (!cur || typeof cur !== "object" || seen.has(cur)) continue;
     seen.add(cur);
 
+
     if (cur.ExtraAttributes && typeof cur.ExtraAttributes === "object") return cur.ExtraAttributes;
     if (cur.tag?.ExtraAttributes && typeof cur.tag.ExtraAttributes === "object") return cur.tag.ExtraAttributes;
+
 
     for (const v of Object.values(cur)) {
       if (v && typeof v === "object") stack.push(v);
@@ -487,11 +550,13 @@ function findExtraAttributes(rootParsed) {
   return null;
 }
 
+
 /* =========================
    Extract features from ExtraAttributes
 ========================= */
 function extractEnchants(extra) {
   const ench = new Map();
+
 
   if (extra?.enchantments && typeof extra.enchantments === "object") {
     for (const [k, v] of Object.entries(extra.enchantments)) {
@@ -501,10 +566,12 @@ function extractEnchants(extra) {
     }
   }
 
+
   const ue = extra?.ultimate_enchant;
   if (ue) {
     let name = "";
     let lv = 0;
+
 
     if (typeof ue === "string") {
       const m = ue.match(/^([A-Z_]+)_(\d{1,2})$/);
@@ -517,18 +584,23 @@ function extractEnchants(extra) {
       lv = Number(ue.level ?? ue.lvl ?? ue.tier ?? 0);
     }
 
+
     const nk = normalizeEnchantKey(String(name).replace(/_/g, " "));
     if (nk && Number.isFinite(lv) && lv > 0) ench.set(nk, Math.max(ench.get(nk) || 0, lv));
   }
 
+
   return ench;
 }
+
 
 function extractStars(extra) {
   const d = Number(extra?.dungeon_item_level ?? 0);
   const u = Number(extra?.upgrade_level ?? 0);
 
+
   const dstars = Number.isFinite(d) ? Math.max(0, Math.min(5, Math.trunc(d))) : 0;
+
 
   let mstars = 0;
   if (Number.isFinite(u)) {
@@ -537,8 +609,10 @@ function extractStars(extra) {
     if (!dstars && total <= 5) return { dstars: total, mstars: 0 };
   }
 
+
   return { dstars, mstars };
 }
+
 
 function extractPetLevel(extra, itemName) {
   const petInfo = extra?.petInfo;
@@ -550,25 +624,31 @@ function extractPetLevel(extra, itemName) {
     } catch {}
   }
 
+
   const t = tokenize(itemName);
   if ((t[0] === "lvl" || t[0] === "lv" || t[0] === "level") && /^\d+$/.test(t[1] || "")) {
     const lv = Number(t[1]);
     if (Number.isFinite(lv) && lv >= 1 && lv <= 200) return Math.trunc(lv);
   }
 
+
   return 0;
 }
+
 
 function extractCosmetics(extra) {
   const dye =
     typeof extra?.dye_item === "string" ? toSigKey(extra.dye_item.replace(/_/g, " ")) : "";
 
+
   const skin =
     typeof extra?.skin === "string" ? toSigKey(extra.skin.replace(/_/g, " ")) : "";
+
 
   const petSkinRaw = extra?.petSkin ?? extra?.pet_skin ?? "";
   const petskin =
     typeof petSkinRaw === "string" && petSkinRaw ? toSigKey(String(petSkinRaw).replace(/_/g, " ")) : "";
+
 
   return {
     dye: dye || "none",
@@ -577,14 +657,17 @@ function extractCosmetics(extra) {
   };
 }
 
+
 function extractWitherImpactFlag(itemName, rootParsed) {
   const key = canonicalItemKey(itemName);
   const isBlade = ["hyperion", "astraea", "scylla", "valkyrie"].some((w) => key.includes(w));
   if (!isBlade) return false;
 
+
   const s = JSON.stringify(unwrap(rootParsed) || {});
   return s.includes("IMPLOSION_SCROLL") && s.includes("SHADOW_WARP_SCROLL") && s.includes("WITHER_SHIELD_SCROLL");
 }
+
 
 /* =========================
    BUILD SIGNATURE
@@ -593,19 +676,25 @@ export async function buildSignature({ itemName = "", lore = "", tier = "", item
   const rootParsed = await parseItemBytes(itemBytes);
   const extra = findExtraAttributes(rootParsed) || {};
 
+
   const enchMap = extractEnchants(extra);
   const enchTokens = mapToEnchantTokens(enchMap);
+
 
   const { dstars, mstars } = extractStars(extra);
   const hasWI = extractWitherImpactFlag(itemName, rootParsed);
   const petLevel = extractPetLevel(extra, itemName);
 
+
   const { dye, skin, petskin } = extractCosmetics(extra);
+
 
   // NEW: pet held item
   const petHeld = extractPetHeldItem(extra, lore);
 
+
   const tierKey = normKey(tier).replace(/\s+/g, "_");
+
 
   const parts = [];
   if (tierKey) parts.push(`tier:${tierKey}`);
@@ -617,9 +706,10 @@ export async function buildSignature({ itemName = "", lore = "", tier = "", item
   if (skin && skin !== "none") parts.push(`skin:${skin}`);
   if (petskin && petskin !== "none") parts.push(`petskin:${petskin}`);
 
+
   // Only include if detected (server can treat missing as unverifiable)
   if (petHeld?.key) parts.push(`pet_item:${petHeld.key}`);
 
+
   return [...parts, ...enchTokens].join("|");
 }
-
