@@ -194,13 +194,15 @@ function renderStarsHtml(dungeonStars, masterStars) {
   const ms = clampInt(masterStars, 0, 5);
   if (ds <= 0 && ms <= 0) return "";
 
-  // Requested format: (item) (stars icons) (master star number)
-  // - Dungeon stars: ✪ repeated 1–5
-  // - Master stars: show as a clear badge "M#"
-  const icons = "✪".repeat(ds);
+  // Desired header format: (item) (stars) (master-star number)
+  // Example: "Withered Dark Claymore ✪✪✪✪✪ [M5]"
+  const dungeonIcons = "✪".repeat(ds);
+  const masterIcons = "✪".repeat(ms);
 
-  const master = ms > 0 ? `<span class="mstar-badge" title="Master Stars">M${ms}</span>` : "";
-  return `<span class="sb-stars" aria-label="Dungeon stars">${escapeHtml(icons)}</span>${master}`;
+  const badge = ms > 0 ? `<span class="master-badge">M${ms}</span>` : "";
+
+  // Render dungeon stars + (optional) master stars (styled separately)
+  return `<span class="sb-stars"><span class="dstars">${escapeHtml(dungeonIcons)}</span><span class="mstars">${escapeHtml(masterIcons)}</span></span>${badge}`;
 }
 
 
