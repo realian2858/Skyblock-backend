@@ -121,6 +121,16 @@ function escapeHtml(s) {
     .replace(/'/g, "&#039;");
 }
 
+function cleanEnchantsValue(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+
+  // if the input accidentally contains UI helper text, ignore it
+  if (/^start typing:/i.test(s)) return "";
+  if (s.includes("→")) return "";
+
+  return s;
+}
 
 function normalizeTextForDedupe(s) {
   return String(s || "")
@@ -929,7 +939,7 @@ async function runAdvancedMode() {
 
   const item = (itemEl.dataset.key || itemEl.value || "").trim();
   const stars10 = Number(starsEl.value || 0);
-  const enchants = (enchEl.value || "").trim();
+  const enchants = cleanEnchantsValue(enchEl.value);
 
 
   const rarity = String(rarityEl?.value || "").trim().toLowerCase();
@@ -1039,3 +1049,4 @@ document.addEventListener("DOMContentLoaded", () => {
 
   renderTop3Rail([]);
 });
+
