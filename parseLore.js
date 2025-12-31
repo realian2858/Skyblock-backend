@@ -69,7 +69,7 @@ const REFORGE_PREFIXES = new Set([
   // bows
   "hasty","precise","rapid","spiritual","fine","neat","grand","awkward","rich","headstrong","unreal",
   // weapons
-  "fabled","withered","heroic","spicy","sharp","legendary","dirty","fanged","suspicious","shiny","bulky",
+  "fabled","withered","heroic","spicy","sharp","legendary","dirty","fanged","suspicious","bulky",
   "gilded","warped","coldfused","fair","gentle","odd","fast","jerry's",
   // armor
   "ancient","giant","perfect","renowned","jaded","loving","necrotic","empowered","spiked","cubic",
@@ -90,10 +90,22 @@ function tokenize(s) {
 
 function stripReforgePrefixTokens(tokens) {
   const t = Array.isArray(tokens) ? tokens.slice() : tokenize(tokens);
-  for (let i = 0; i < 4; i++) {
-    if (t.length > 1 && REFORGE_PREFIXES.has(t[0])) t.shift();
-    else break;
+
+  // Also strip common cosmetic prefixes that can appear before reforges
+  // e.g. "Shiny Suspicious Hyperion" -> "Hyperion"
+  const SOFT_PREFIXES = new Set(["shiny"]);
+
+  // up to 3 removals to handle: shiny + reforge + item
+  for (let i = 0; i < 3; i++) {
+    if (t.length > 1 && REFORGE_PREFIXES.has(t[0])) { t.shift(); continue; }
+    if (t.length > 1 && SOFT_PREFIXES.has(t[0])) { t.shift(); continue; }
+    // special: if first token is not removable, but second is a reforge AND first is a soft prefix already handled above
+    break;
   }
+
+  // If we stripped "shiny" but the next token is still a reforge, strip it too.
+  if (t.length > 1 && REFORGE_PREFIXES.has(t[0])) t.shift();
+
   return t;
 }
 
@@ -595,24 +607,23 @@ function extractEnchants(extra) {
 
 
 function extractStars(extra) {
-  // Hypixel data is inconsistent:
-  // - sometimes dungeon_item_level is 0..5 (dungeon stars)
-  // - sometimes it is 0..10 (total stars incl. master)
-  // - sometimes upgrade_level is 0..10 (total)
-  const dRaw = Number(extra?.dungeon_item_level ?? 0);
-  const uRaw = Number(extra?.upgrade_level ?? 0);
+  const d = Number(extra?.dungeon_item_level ?? 0);
+  const u = Number(extra?.upgrade_level ?? 0);
 
-  const d = Number.isFinite(dRaw) ? Math.max(0, Math.min(10, Math.trunc(dRaw))) : 0;
-  const u = Number.isFinite(uRaw) ? Math.max(0, Math.min(10, Math.trunc(uRaw))) : 0;
 
-  const total = Math.max(d, u); // best guess total stars (0..10)
+  const dstars = Number.isFinite(d) ? Math.max(0, Math.min(5, Math.trunc(d))) : 0;
 
-  if (total <= 0) return { dstars: 0, mstars: 0 };
-  if (total <= 5) return { dstars: total, mstars: 0 };
 
-  return { dstars: 5, mstars: Math.max(0, Math.min(5, total - 5)) };
+  let mstars = 0;
+  if (Number.isFinite(u)) {
+    const total = Math.max(0, Math.min(10, Math.trunc(u)));
+    if (total > 5) mstars = total - 5;
+    if (!dstars && total <= 5) return { dstars: total, mstars: 0 };
+  }
+
+
+  return { dstars, mstars };
 }
-
 
 
 function extractPetLevel(extra, itemName) {
