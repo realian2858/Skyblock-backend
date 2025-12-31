@@ -1,23 +1,6 @@
-// ingest.js (v6 - FIX: refresh wrong stars10 signatures + build sig when item_name contains stars)
+// ingest.js (v7 - MATCHED PIPELINE: normalized name everywhere, WI fixed by lore fallback, stars10 stable)
+//
 // Cloud Run Job: RUN ONCE + EXIT
-//
-// ✅ Full snapshot each run (all pages)
-// ✅ Bulk upsert auctions
-// ✅ Build signature when BIN OR bytes/lore exists OR item_name contains coflnet stars
-// ✅ Overwrite signature when stars10 changes (fixes "10★ read as 5★" stuck rows)
-// ✅ Mark not-seen auctions as ended (LBIN correctness)
-// ✅ Finalize ended -> sales in batches
-// ✅ Backfill sales.item_key lightly
-// ✅ Runs ONCE then exits (Cloud Run Job friendly)
-//
-// ✅ FIX (circle-stars -> signature + key correctness):
-//    - itemNameLooksStarred now detects ○◉◎◍ as well
-//    - canonicalItemKey is computed from a star-stripped name so starred names don’t fragment item_key
-//    - buildSignature gets a normalized name where circle-stars are converted to ✪ and weird digits normalized
-//
-// Env required:
-// - DATABASE_URL
-// - HYPIXEL_API_KEY
 
 import dotenv from "dotenv";
 import pg from "pg";
@@ -25,9 +8,6 @@ import { canonicalItemKey, buildSignature } from "./parseLore.js";
 
 dotenv.config();
 
-/* =========================
-   Config
-========================= */
 const API = "https://api.hypixel.net/skyblock/auctions";
 
 function requireEnv(name) {
@@ -39,27 +19,17 @@ function requireEnv(name) {
 const DATABASE_URL = requireEnv("DATABASE_URL");
 const HYPIXEL_KEY = requireEnv("HYPIXEL_API_KEY");
 
-// Hypixel API pacing
 const PAGE_DELAY_MS = 90;
-
-// LBIN correctness: if not seen recently, treat as ended
 const PER_SYNC_GRACE_MS = 60_000;
 
-// Finalize ended auctions -> sales
 const FINALIZE_BATCH = 5000;
 const FINALIZE_MAX_LOOPS = 60;
 
-// Maintenance
 const SALES_KEY_BACKFILL_BATCH = 20000;
-
-// Safety
 const MAX_PAGES_HARD_CAP = 200;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/* =========================
-   Postgres pool
-========================= */
 const pool = new pg.Pool({
   connectionString: DATABASE_URL,
   max: 10,
@@ -71,9 +41,6 @@ pool.on("error", (err) => {
   console.error("PG pool error:", err?.message || err);
 });
 
-/* =========================
-   HTTP helpers
-========================= */
 async function fetchJson(url, tries = 4) {
   let lastErr = null;
   for (let i = 0; i < tries; i++) {
@@ -102,7 +69,7 @@ function nonEmptyText(x) {
 }
 
 /* =========================
-   Display cleaning + weird digit normalization (local)
+   Shared normalize helpers (MATCH server)
 ========================= */
 const DIGIT_CHAR_MAP = (() => {
   const map = new Map();
@@ -134,39 +101,23 @@ function stripStarGlyphs(s) {
     .trim();
 }
 
-// make name "parseLore-friendly": circle-stars -> ✪ and normalize digits
+// normalize itemName for signature parsing (circle-stars -> ✪, weird digits -> ascii)
 function normalizeNameForSignature(itemName) {
   let s = String(itemName || "");
   s = normalizeWeirdDigits(s);
-  // convert circle-stars to ✪ so coflnet parsing sees them
   s = s.replace(/[●⬤•○◉◎◍]/g, "✪");
-  // keep existing star glyphs as ✪
   s = s.replace(/[★☆✯✰]/g, "✪");
   return s;
 }
 
-/* =========================
-   Star presence heuristic (Coflnet-style)
-   If item_name contains ✪/★/● or dingbat/circled digits,
-   we should build a signature even without bytes/lore.
-========================= */
 function itemNameLooksStarred(itemName) {
   const s = String(itemName ?? "");
   if (!s) return false;
-
-  // star/circle-star glyphs
   if (/[✪★☆✯✰●⬤•○◉◎◍]/.test(s)) return true;
-
-  // dingbat/circled/superscript digits commonly used for master stars addon
-  if (/[➊➋➌➍➎➏➐➑➒➓⓪①②③④⑤⑥⑦⑧⑨❶❷❸❹❺❻❼❽❾❿⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉]/.test(s))
-    return true;
-
+  if (/[➊➋➌➍➎➏➐➑➒➓⓪①②③④⑤⑥⑦⑧⑨❶❷❸❹❺❻❼❽❾❿⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉]/.test(s)) return true;
   return false;
 }
 
-/* =========================
-   Signature safe wrapper
-========================= */
 async function safeBuildSignature({ itemName, lore, tier, itemBytes }) {
   try {
     const sig = await buildSignature({
@@ -184,7 +135,6 @@ async function safeBuildSignature({ itemName, lore, tier, itemBytes }) {
 
 /* =========================
    Bulk upsert auctions
-   KEY FIX: signature update rule compares stars10 in SQL.
 ========================= */
 async function upsertAuctionsBulk(list, now) {
   if (!Array.isArray(list) || list.length === 0) return 0;
@@ -196,7 +146,6 @@ async function upsertAuctionsBulk(list, now) {
     if (!uuid) continue;
 
     const itemName = a.item_name || "";
-    // ✅ prevent starred names from fragmenting item_key
     const itemKey = canonicalItemKey(stripStarGlyphs(itemName)) || null;
 
     const bin = !!a.bin;
@@ -209,13 +158,11 @@ async function upsertAuctionsBulk(list, now) {
     const lore = nonEmptyText(a.item_lore);
     const bytes = nonEmptyText(a.item_bytes);
 
-    // ✅ build signature if BIN OR bytes/lore exist OR name contains coflnet stars
     const shouldBuildSig = bin || !!lore || !!bytes || itemNameLooksStarred(itemName);
 
     let sig = null;
     if (shouldBuildSig) {
       sig = await safeBuildSignature({
-        // ✅ normalize circle-stars so parseLore can compute stars10 correctly
         itemName: normalizeNameForSignature(itemName),
         lore: lore || "",
         tier: tier || "",
@@ -271,12 +218,6 @@ async function upsertAuctionsBulk(list, now) {
       );
     }
 
-    // ✅ signature overwrite rules:
-    // - if existing empty -> take new
-    // - if pet_item added -> take new
-    // - if stars10 differs -> take new (THIS FIXES stuck 5-star signatures)
-    //
-    // NOTE: regexp_match returns text[], [1] is the capture group
     const sql = `
       INSERT INTO auctions
         (uuid, item_name, item_key, bin, start_ts, end_ts,
@@ -299,24 +240,17 @@ async function upsertAuctionsBulk(list, now) {
         is_ended     = false,
         signature = CASE
           WHEN EXCLUDED.signature IS NULL OR EXCLUDED.signature = '' THEN auctions.signature
-
           WHEN auctions.signature IS NULL OR auctions.signature = '' THEN EXCLUDED.signature
-
           WHEN auctions.signature NOT LIKE '%pet_item:%' AND EXCLUDED.signature LIKE '%pet_item:%' THEN EXCLUDED.signature
-
           WHEN (
-            -- compare stars10 if both exist; overwrite if different
             (regexp_match(auctions.signature, 'stars10:(\\d+)'))[1] IS NOT NULL
             AND (regexp_match(EXCLUDED.signature, 'stars10:(\\d+)'))[1] IS NOT NULL
             AND (regexp_match(auctions.signature, 'stars10:(\\d+)'))[1] <> (regexp_match(EXCLUDED.signature, 'stars10:(\\d+)'))[1]
           ) THEN EXCLUDED.signature
-
           WHEN (
-            -- if existing has no stars10 but new does, take new
             (regexp_match(auctions.signature, 'stars10:(\\d+)'))[1] IS NULL
             AND (regexp_match(EXCLUDED.signature, 'stars10:(\\d+)'))[1] IS NOT NULL
           ) THEN EXCLUDED.signature
-
           ELSE auctions.signature
         END
     `;
@@ -325,18 +259,13 @@ async function upsertAuctionsBulk(list, now) {
     await client.query("COMMIT");
     return rows.length;
   } catch (e) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {}
+    try { await client.query("ROLLBACK"); } catch {}
     throw e;
   } finally {
     client.release();
   }
 }
 
-/* =========================
-   LBIN correctness: end unseen
-========================= */
 async function markNotSeenInSnapshotAsEnded(now) {
   await pool.query(
     `
@@ -349,10 +278,6 @@ async function markNotSeenInSnapshotAsEnded(now) {
   );
 }
 
-/* =========================
-   Finalize ended -> sales
-   KEY FIX: same stars10-refresh signature logic as auctions
-========================= */
 async function finalizeEnded(now) {
   const { rows } = await pool.query(
     `
@@ -392,24 +317,21 @@ async function finalizeEnded(now) {
         final_price = EXCLUDED.final_price,
         ended_ts    = EXCLUDED.ended_ts,
         tier        = EXCLUDED.tier,
+        item_lore   = COALESCE(EXCLUDED.item_lore, sales.item_lore),
+        item_bytes  = COALESCE(EXCLUDED.item_bytes, sales.item_bytes),
         signature = CASE
           WHEN EXCLUDED.signature IS NULL OR EXCLUDED.signature = '' THEN sales.signature
-
           WHEN sales.signature IS NULL OR sales.signature = '' THEN EXCLUDED.signature
-
           WHEN sales.signature NOT LIKE '%pet_item:%' AND EXCLUDED.signature LIKE '%pet_item:%' THEN EXCLUDED.signature
-
           WHEN (
             (regexp_match(sales.signature, 'stars10:(\\d+)'))[1] IS NOT NULL
             AND (regexp_match(EXCLUDED.signature, 'stars10:(\\d+)'))[1] IS NOT NULL
             AND (regexp_match(sales.signature, 'stars10:(\\d+)'))[1] <> (regexp_match(EXCLUDED.signature, 'stars10:(\\d+)'))[1]
           ) THEN EXCLUDED.signature
-
           WHEN (
             (regexp_match(sales.signature, 'stars10:(\\d+)'))[1] IS NULL
             AND (regexp_match(EXCLUDED.signature, 'stars10:(\\d+)'))[1] IS NOT NULL
           ) THEN EXCLUDED.signature
-
           ELSE sales.signature
         END
     `;
@@ -421,10 +343,8 @@ async function finalizeEnded(now) {
     for (const r of rows) {
       const price = Number(r.bin ? r.starting_bid : r.highest_bid) || 0;
 
-      // ✅ item_key should not depend on stars embedded in name
       const itemKey = r.item_key || canonicalItemKey(stripStarGlyphs(r.item_name || "")) || null;
 
-      // ✅ build sig even for starred names (some ended auctions have no lore/bytes stored)
       const shouldBuildSig =
         !!r.signature ||
         !!r.item_lore ||
@@ -435,7 +355,6 @@ async function finalizeEnded(now) {
         (r.signature && String(r.signature).trim()) ||
         (shouldBuildSig
           ? await safeBuildSignature({
-              // ✅ normalize circle-stars so parseLore can compute stars10 correctly
               itemName: normalizeNameForSignature(r.item_name || ""),
               lore: (r.item_lore || "").toString(),
               tier: r.tier || "",
@@ -463,18 +382,13 @@ async function finalizeEnded(now) {
     await client.query("COMMIT");
     return moved;
   } catch (e) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {}
+    try { await client.query("ROLLBACK"); } catch {}
     throw e;
   } finally {
     client.release();
   }
 }
 
-/* =========================
-   Backfill sales.item_key
-========================= */
 async function backfillSalesItemKeys({ batch = SALES_KEY_BACKFILL_BATCH } = {}) {
   const client = await pool.connect();
   try {
@@ -504,18 +418,13 @@ async function backfillSalesItemKeys({ batch = SALES_KEY_BACKFILL_BATCH } = {}) 
     await client.query("COMMIT");
     return updated;
   } catch (e) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {}
+    try { await client.query("ROLLBACK"); } catch {}
     throw e;
   } finally {
     client.release();
   }
 }
 
-/* =========================
-   One full run
-========================= */
 async function syncOnce() {
   const now = Date.now();
 
@@ -550,9 +459,6 @@ async function syncOnce() {
   console.log(`✅ Upserted live: ${upserted} | Finalized sales: ${totalFinalized}`);
 }
 
-/* =========================
-   ENTRYPOINT (Job: run once + exit)
-========================= */
 async function main() {
   console.log("🚀 INGEST BOOT", new Date().toISOString());
   console.log("ENV OK:", {
@@ -561,21 +467,16 @@ async function main() {
   });
 
   await syncOnce();
-
   console.log("✅ INGEST DONE", new Date().toISOString());
 }
 
 main()
   .then(async () => {
-    try {
-      await pool.end();
-    } catch {}
+    try { await pool.end(); } catch {}
     process.exit(0);
   })
   .catch(async (e) => {
     console.error("❌ INGEST FAILED", e?.stack || e);
-    try {
-      await pool.end();
-    } catch {}
+    try { await pool.end(); } catch {}
     process.exit(1);
   });
