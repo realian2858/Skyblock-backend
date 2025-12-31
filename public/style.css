@@ -6,31 +6,39 @@ Goals:
 - ADD: Lowest Price visual box inside results
 */
 
+
 :root{
   --bg0:#060910;
   --bg1:#0B1423;
+
 
   --panel: rgba(255,255,255,.06);
   --panel2: rgba(255,255,255,.085);
   --stroke: rgba(255,255,255,.11);
 
+
   --text: rgba(255,255,255,.93);
   --muted: rgba(255,255,255,.68);
+
 
   --accent:#4F7DFF;
   --accent2:#3EE6D0;
 
+
   --r:18px;
   --shadow: 0 18px 60px rgba(0,0,0,.55);
 
+
   --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;
   --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+
 
   /* Tier colors */
   --tier-misc: rgba(255,255,255,.92);
   --tier-aa:   #ff2d2d;
   --tier-aaa:  #ffd24a;
   --tier-partial: #b56bff;
+
 
   /* tighter type scale */
   --fs-0: 12px;
@@ -40,8 +48,10 @@ Goals:
   --fs-4: 20px;
 }
 
+
 *{ box-sizing:border-box; }
 html,body{ height:100%; }
+
 
 body{
   margin:0;
@@ -55,6 +65,7 @@ body{
     linear-gradient(180deg, var(--bg0), var(--bg1));
 }
 
+
 /* =========================
     Topbar
 ========================= */
@@ -67,6 +78,7 @@ body{
   border-bottom: 1px solid rgba(255,255,255,.06);
 }
 
+
 .brand{
   width:100%;
   margin:0 auto;
@@ -77,6 +89,7 @@ body{
   align-items:center;
 }
 
+
 .brand-mark{
   width:36px;height:36px;
   border-radius:13px;
@@ -85,6 +98,7 @@ body{
   box-shadow: 0 10px 25px rgba(79,125,255,.25);
   font-weight: 1000;
 }
+
 
 .brand-text h1{
   margin:0;
@@ -97,6 +111,7 @@ body{
   color: var(--muted);
 }
 
+
 /* =========================
     Shell
 ========================= */
@@ -106,6 +121,7 @@ body{
   margin: 0 auto;
   padding: 14px 14px 36px;
 }
+
 
 /* =========================
     Browse header + tabs
@@ -118,6 +134,7 @@ body{
   border:1px solid rgba(255,255,255,.06);
 }
 
+
 .browse-title{
   background: linear-gradient(135deg, rgba(79,125,255,.92), rgba(62,230,208,.62));
   color: rgba(0,0,0,.86);
@@ -128,6 +145,7 @@ body{
   font-size: 13px;
 }
 
+
 .browse-tabs{
   display:flex;
   justify-content:center;
@@ -135,6 +153,7 @@ body{
   padding:10px;
   background: rgba(0,0,0,.26);
 }
+
 
 .tab{
   min-width:120px;
@@ -156,11 +175,13 @@ body{
   background: linear-gradient(135deg, rgba(79,125,255,.22), rgba(62,230,208,.14));
 }
 
+
 /* =========================
     Views
 ========================= */
 .view{ display:none; }
 .view.active{ display:block; }
+
 
 /* =========================
     Global grid
@@ -173,6 +194,7 @@ body{
 }
 .col-left,.col-right{ display:flex; flex-direction:column; gap:14px; }
 
+
 /* =========================
     Cards
 ========================= */
@@ -184,12 +206,14 @@ body{
   overflow:hidden;
 }
 
+
 .card-hero{
   background:
     radial-gradient(900px 600px at 30% 0%, rgba(79,125,255,.13), transparent 55%),
     radial-gradient(700px 500px at 85% 10%, rgba(62,230,208,.10), transparent 55%),
     var(--panel);
 }
+
 
 .card-head{
   display:flex;
@@ -199,14 +223,17 @@ body{
   border-bottom:1px solid rgba(255,255,255,.06);
 }
 
+
 .card-head h2{
   margin:0;
   font-size: var(--fs-3);
   letter-spacing:.15px;
 }
 
+
 .subcard{ padding:12px 14px; }
 .subcard + .subcard{ border-top:1px solid rgba(255,255,255,.06); }
+
 
 .subcard-head{
   display:flex;
@@ -225,6 +252,7 @@ body{
   color: rgba(255,255,255,.60);
 }
 
+
 /* Pills */
 .pill{
   font-size: 11.5px;
@@ -236,6 +264,7 @@ body{
 }
 .pill-alt{ border-color: rgba(62,230,208,.25); }
 .pill-hero{ border-color: rgba(79,125,255,.25); }
+
 
 /* =========================
     Basics layout (Sell + Lowball side-by-side)
@@ -249,6 +278,7 @@ body{
   .basics-grid{ grid-template-columns: 1fr; }
 }
 
+
 /* =========================
     Inputs
 ========================= */
@@ -259,6 +289,7 @@ label{
   color: rgba(255,255,255,.68);
   font-weight: 800;
 }
+
 
 input[type="text"], select{
   width:100%;
@@ -273,6 +304,7 @@ input[type="text"], select{
   transition: box-shadow .12s ease, border-color .12s ease, background .12s ease;
 }
 
+
 /* NEW: Live Signature Focus Field Styling */
 #advLiveSignature {
   border-color: rgba(62,230,208, 0.25);
@@ -284,13 +316,16 @@ input[type="text"], select{
   box-shadow: 0 0 0 4px rgba(62,230,208, 0.15);
 }
 
+
 input[type="text"]::placeholder{ color: rgba(255,255,255,.44); }
+
 
 input[type="text"]:focus, select:focus{
   border-color: rgba(79,125,255,.62);
   box-shadow: 0 0 0 4px rgba(79,125,255,.14);
   background: rgba(0,0,0,.34);
 }
+
 
 /* ✅ Better select + options visibility */
 select{
@@ -305,10 +340,12 @@ select{
   background-repeat: no-repeat;
 }
 
+
 select option{
   background: #0c1422;
   color: rgba(255,255,255,.95);
 }
+
 
 .hint{
   margin-top:6px;
@@ -316,10 +353,12 @@ select option{
   color: rgba(255,255,255,.52);
 }
 
+
 .row-2{ display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
 @media (max-width: 980px){
   .row-2{ grid-template-columns: 1fr; }
 }
+
 
 /* =========================
     Buttons
@@ -340,6 +379,7 @@ select option{
 .btn:hover{ transform: translateY(-1px); background: rgba(255,255,255,.11); }
 .btn:disabled{ opacity:.55; transform:none; cursor:not-allowed; }
 
+
 .btn-primary{
   border:none;
   background: linear-gradient(135deg, rgba(79,125,255,.95), rgba(62,230,208,.75));
@@ -348,8 +388,10 @@ select option{
 }
 .btn-primary:hover{ filter: brightness(1.06); }
 
+
 .btn-wide{ width:100%; }
 .btn-ghost{ width:100%; margin-top:0; background: rgba(255,255,255,.05); }
+
 
 .btn-icon{
   width:32px;
@@ -362,6 +404,7 @@ select option{
   font-size: 13px;
 }
 .btn-icon:hover{ background: rgba(255,255,255,.10); }
+
 
 /* =========================
     Suggestions dropdown
@@ -390,6 +433,7 @@ select option{
 }
 .mod-suggest .item:hover{ background: rgba(79,125,255,.14); }
 
+
 /* =========================
     Advanced layout (match bottoms)
 ========================= */
@@ -401,6 +445,7 @@ select option{
   align-items:stretch;   /* ✅ makes both panels same height */
 }
 
+
 .adv-panel{
   border-radius:16px;
   border:1px solid rgba(255,255,255,.10);
@@ -410,6 +455,7 @@ select option{
   flex-direction:column; /* ✅ enables inner stretching */
   min-height: 100%;
 }
+
 
 .adv-panel-head{
   padding:12px 14px;
@@ -429,9 +475,11 @@ select option{
   color: rgba(255,255,255,.58);
 }
 
+
 /* left panel rows */
 .hero-row{ padding:12px 14px; }
 .hero-row + .hero-row{ border-top:1px solid rgba(255,255,255,.06); }
+
 
 .hero-row-3{
   display:grid;
@@ -445,8 +493,10 @@ select option{
 }
 .hero-row-1{ padding: 10px 14px; }
 
+
 /* NEW: Adjusted to accommodate Live Signature without stretching layout */
 .field-actions{ display:flex; flex-direction: column; gap: 0; }
+
 
 /* Range row */
 .range-row{
@@ -462,6 +512,7 @@ select option{
   color: rgba(255,255,255,.92);
   font-size: 12.5px;
 }
+
 
 /* =========================
     WI Toggle
@@ -505,10 +556,12 @@ select option{
   font-weight:1000;
 }
 
+
 /* =========================
     Recommendation card: make it compact so everything fits
 ========================= */
 .results{ padding: 0 14px 14px; }
+
 
 .result-card{
   border-radius: 16px;
@@ -525,6 +578,7 @@ select option{
 }
 .result-pre{ padding: 10px 12px; }
 
+
 #advOut{
   max-height: 210px; /* ✅ less tall to avoid scroll */
   overflow:auto;
@@ -533,10 +587,12 @@ select option{
   line-height: 1.22;
 }
 
+
 .out-head{ opacity:.95; font-weight:1000; font-size: 13.5px; font-family: var(--sans); }
 .out-big{ margin-top:6px; font-weight:1000; font-size: 15.5px; font-family: var(--mono); }
 .out-sub{ margin-top:8px; opacity:.78; font-size: 12px; font-family: var(--sans); }
 .out-err{ font-weight: 1000; color: rgba(255,120,120,.95); font-family: var(--sans); }
+
 
 .out-grid{
   margin-top:10px;
@@ -551,11 +607,13 @@ select option{
   padding:8px 10px;
 }
 
+
 /* ADDED: Lowest Price Specialized Box */
 .out-box-lowest {
   border-color: rgba(62,230,208,.3);
   background: rgba(62,230,208,.05);
 }
+
 
 .out-box-k{
   font-size: 11.5px;
@@ -582,6 +640,7 @@ select option{
   flex-wrap:wrap;
 }
 
+
 /* =========================
     Market Echoes: stretch to match left panel bottom
 ========================= */
@@ -594,6 +653,7 @@ select option{
   flex: 1;                  /* ✅ fill remaining panel height */
   min-height: 0;           /* ✅ allow internal fitting */
 }
+
 
 .mini-card{
   border-radius:16px;
@@ -611,6 +671,7 @@ select option{
   padding-left: 6px;
   opacity: 0.95;
 }
+
 
 /* header area */
 .mini-head{
@@ -637,6 +698,7 @@ select option{
   font-family: var(--mono);
 }
 
+
 /* chips inside cards smaller */
 .mini-tags{
   margin-top:8px;
@@ -656,16 +718,19 @@ select option{
   flex-wrap:wrap;
 }
 
+
 .mini-scroll{
   margin-top:8px;
   overflow:hidden;
   padding-right:0;
 }
 
+
 /* key list tighter */
 .mini-stack{ margin-top:8px; display:flex; flex-direction:column; gap:6px; }
 .mini-row{ display:flex; justify-content:space-between; gap:10px; }
 .mini-row-right{ white-space:nowrap; font-family: var(--mono); font-size: 11.5px; }
+
 
 /* UUID pinned at bottom */
 .mini-uuid{
@@ -678,17 +743,20 @@ select option{
   line-height: 1.2;
 }
 
+
 /* =========================
     Enchants list (more compact)
 ========================= */
 .ench-list{ margin-top:8px; display:flex; flex-direction:column; gap:6px; }
 .ench-more{ opacity:.70; margin-top:6px; font-size: 11.5px; }
 
+
 .ench-line{
   display:flex;
   align-items:flex-start;
   gap:8px;
 }
+
 
 .ench-tag{
   font-family: var(--mono);
@@ -702,6 +770,7 @@ select option{
   flex: 0 0 auto;
 }
 
+
 .ench-text{
   font-size: 12.2px;  
   font-weight: 900;
@@ -709,10 +778,12 @@ select option{
   color: var(--tier-misc);
 }
 
+
 .ench-tag[data-tier="MISC-A"] + .ench-text{ color: var(--tier-misc); }
 .ench-tag[data-tier="AA"]     + .ench-text{ color: var(--tier-aa); }
 .ench-tag[data-tier="AAA"]    + .ench-text{ color: var(--tier-aaa); }
 .ench-tag[data-tier="PARTIAL"] + .ench-text{ color: var(--tier-partial); }
+
 
 .ench-tag[data-tier="PARTIAL"]{
   border-color: rgba(181,107,255,.45);
@@ -724,6 +795,7 @@ select option{
     box-shadow: 0 0 15px rgba(62, 230, 208, 0.4);
     position: relative;
 }
+
 
 .perfect-badge {
     position: absolute;
@@ -757,6 +829,7 @@ select option{
   color: transparent;
 }
 
+
 .result-stack{ margin-top: 10px; display:flex; flex-direction:column; gap:10px; }
 .result-line{
   padding: 10px 12px;
@@ -766,6 +839,7 @@ select option{
   color: rgba(255,255,255,.90);
   font-size: 13px;
 }
+
 
 /* =========================
     Chips / tags / UUID
@@ -786,6 +860,7 @@ select option{
 .tag-wi-on{ border-color: rgba(62,230,208,.35); }
 .tag-wi-off{ border-color: rgba(255,255,255,.12); }
 
+
 .uuid-copy-btn{
   padding:6px 10px;
   border-radius:999px;
@@ -799,6 +874,7 @@ select option{
 .uuid-copy-btn.uuid-ok{ border-color: rgba(62,230,208,.35); background: rgba(62,230,208,.10); }
 .uuid-copy-btn.uuid-bad{ border-color: rgba(255,80,80,.45); background: rgba(255,80,80,.10); }
 
+
 /* =========================
     Footer
 ========================= */
@@ -810,6 +886,7 @@ select option{
 }
 .muted{ color: rgba(255,255,255,.58); }
 
+
 /* =========================
     Responsive
 ========================= */
@@ -817,10 +894,12 @@ select option{
   .top3-grid{ grid-template-columns: 1fr; }
 }
 
+
 @media (max-width: 1180px){
   .adv-split{ grid-template-columns: 1fr; align-items:start; }
   .top3-grid{ grid-template-columns: 1fr; }
 }
+
 
 @media (max-width: 980px){
   .grid{ grid-template-columns: 1fr; }
@@ -828,9 +907,11 @@ select option{
   .hero-row-2{ grid-template-columns: 1fr; }
 }
 
+
 @media (max-width: 620px){
   .shell{ max-width: 100%; }
 }
+
 
 /* =========================
     AUTOCOMPLETE UI ADDITION
@@ -859,6 +940,8 @@ select option{
   background: var(--accent);
   color: white;
 }
+
+
 
 
 /* stars numeric display (e.g., 3(2)) */
