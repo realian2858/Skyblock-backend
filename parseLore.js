@@ -89,23 +89,23 @@ function parseStarsFromName(itemName) {
 }
 
 
-// ✅ Do NOT NFKC before removing dingbat/circled digits
-// NFKC can convert ➊➋➌ into 1 2 3 (which then leaks into item_key).
+// --- Variant digit stripping (SAFE: no .has() anywhere) ---
+const VARIANT_DIGITS_RE = /[\u24EA\u2460-\u2473\u2776-\u277F\u2780-\u2793]/g; 
+// ⓪ + ①..⑳ + dingbat circled digits ➀..➓ + ➊..➓
+
+// keep your existing OTHER_VARIANT_CHARS_RE if you already have it,
+// or use this safe default:
+const OTHER_VARIANT_CHARS_RE = /[•●]/g;
+
 function stripVariantDigits(s) {
-  let raw = String(s ?? "");
-
-  // remove known variant chars (stars, bullets, etc) early
-  raw = raw.replace(OTHER_VARIANT_CHARS_RE, " ");
-
-  // remove circled + dingbat digits BEFORE normalization
-  raw = raw
-    .split("")
-    .filter((ch) => !CIRCLED_DIGITS.has(ch) && !DINGBAT_DIGITS.has(ch))
-    .join("");
-
-  // now normalize safely
-  return raw.normalize("NFKC");
+  return String(s ?? "")
+    .normalize("NFKC")
+    .replace(VARIANT_DIGITS_RE, " ")
+    .replace(OTHER_VARIANT_CHARS_RE, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
+
 
 
 /* =========================
@@ -784,4 +784,5 @@ export async function buildSignature({ itemName = "", lore = "", tier = "", item
 
   return [...parts, ...enchTokens].join("|");
 }
+
 
