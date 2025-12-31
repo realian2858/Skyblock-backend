@@ -1,4 +1,4 @@
-// server.js (v18 - FIX: restore ALL autocomplete endpoints + keep strict matching + signature rebuild)
+// server.js (v19 - FIX: response shape matches frontend renderAdvanced + keep strict matching)
 
 import path from "path";
 import { fileURLToPath } from "url";
@@ -124,7 +124,6 @@ function parseUserPetLevel(raw) {
 
 /* =========================
    ✅ Autocomplete data
-   (Paste your full lists here; I include your originals.)
 ========================= */
 const PET_ITEM_LABELS = [
   "All Skills Exp Boost","All Skills Exp Super-Boost","Antique Remedies","Bejeweled Collar","Big Teeth","Bigger Teeth",
@@ -181,7 +180,7 @@ const SKIN_OPTIONS = listToOptions(SKIN_LABELS);
 const PETSKIN_OPTIONS = listToOptions(PET_SKIN_LABELS);
 
 /* =========================
-   ✅ Autocomplete endpoints (THIS is what you were missing)
+   ✅ Autocomplete endpoints
 ========================= */
 app.get("/api/petitems", (req, res) => {
   const q = normKey(req.query.q || "");
@@ -189,18 +188,21 @@ app.get("/api/petitems", (req, res) => {
   const items = !q ? PETITEM_OPTIONS : PETITEM_OPTIONS.filter((x) => normKey(x.label).includes(q));
   res.json({ items: items.slice(0, limit) });
 });
+
 app.get("/api/dyes", (req, res) => {
   const q = normKey(req.query.q || "");
   const limit = Math.max(5, Math.min(60, Number(req.query.limit || 30)));
   const items = !q ? DYE_OPTIONS : DYE_OPTIONS.filter((x) => normKey(x.label).includes(q));
   res.json({ items: items.slice(0, limit) });
 });
+
 app.get("/api/skins", (req, res) => {
   const q = normKey(req.query.q || "");
   const limit = Math.max(5, Math.min(60, Number(req.query.limit || 30)));
   const items = !q ? SKIN_OPTIONS : SKIN_OPTIONS.filter((x) => normKey(x.label).includes(q));
   res.json({ items: items.slice(0, limit) });
 });
+
 app.get("/api/petskins", (req, res) => {
   const q = normKey(req.query.q || "");
   const limit = Math.max(5, Math.min(60, Number(req.query.limit || 30)));
@@ -214,7 +216,7 @@ const ENCHANT_CATALOG = [
   { name: "Duplex", min: 1, max: 5 },
   { name: "Overload", min: 1, max: 5 },
   { name: "Dragon Hunter", min: 1, max: 5 },
-  { name: "Soul Eater", min: 1, max: 5 },
+  { name: "Soul Eater", min: 5, max: 5 },
   { name: "Ultimate Wise", min: 1, max: 5 },
   { name: "One For All", min: 1, max: 1 },
   { name: "Fatal Tempo", min: 1, max: 5 },
@@ -342,7 +344,7 @@ app.get("/api/items", async (req, res) => {
 });
 
 /* =========================
-   Signature / matching (same logic as before)
+   Signature / matching
 ========================= */
 const RESERVED_SIG_KEYS = new Set([
   "tier","dstars","mstars","stars10","stars",
@@ -361,12 +363,8 @@ function sigGet(sig, key) {
   }
   return "";
 }
-function sigDungeonStars(sig) {
-  return Math.max(0, Math.min(5, Number(sigGet(sig, "dstars")) || 0));
-}
-function sigMasterStars(sig) {
-  return Math.max(0, Math.min(5, Number(sigGet(sig, "mstars")) || 0));
-}
+function sigDungeonStars(sig) { return Math.max(0, Math.min(5, Number(sigGet(sig, "dstars")) || 0)); }
+function sigMasterStars(sig) { return Math.max(0, Math.min(5, Number(sigGet(sig, "mstars")) || 0)); }
 function sigStars10(sig) {
   const s10 = Number(sigGet(sig, "stars10")) || 0;
   if (s10 > 0) return Math.max(0, Math.min(10, Math.trunc(s10)));
@@ -412,10 +410,7 @@ function sigEnchantMap(sig) {
 }
 
 const TIER_RANK = { BB: 0, B: 1, A: 2, AA: 3, AAA: 4, MISC: -1 };
-function tierRank(t) {
-  const k = String(t || "").toUpperCase();
-  return TIER_RANK[k] ?? -1;
-}
+function tierRank(t) { return TIER_RANK[String(t || "").toUpperCase()] ?? -1; }
 
 function applyVerifiedFiltersOrNull(sig, filters) {
   if (!sig) return { ok: true, unverifiable: true };
@@ -489,6 +484,13 @@ function median(nums) {
   return n % 2 ? a[mid] : Math.round((a[mid - 1] + a[mid]) / 2);
 }
 
+function percentile(nums, p) {
+  if (!nums.length) return null;
+  const a = nums.slice().sort((x, y) => x - y);
+  const idx = Math.min(a.length - 1, Math.max(0, Math.floor((p / 100) * (a.length - 1))));
+  return a[idx];
+}
+
 async function ensureSignature({ itemName, tier, lore, bytes, existingSig }) {
   const s = String(existingSig || "").trim();
   if (s) return s;
@@ -504,7 +506,62 @@ async function ensureSignature({ itemName, tier, lore, bytes, existingSig }) {
 }
 
 /* =========================
-   /api/recommend (same behavior)
+   Score / explain (for Market Echoes UI)
+========================= */
+function scoreCandidate({ userEnchantsMap, inputStars10, sig }) {
+  // lower is better; convert to a "score" where higher is better
+  let penalty = 0;
+
+  const inStars = Number(inputStars10) || 0;
+  if (inStars > 0) penalty += Math.abs(sigStars10(sig) - inStars) * 2;
+
+  const saleEnchants = sigEnchantMap(sig);
+  for (const [nameKey, inLraw] of userEnchantsMap.entries()) {
+    const inL = Number(inLraw) || 0;
+    const saL = Number(saleEnchants.get(nameKey) || 0);
+    penalty += enchantDiff(nameKey, inL, saL);
+  }
+
+  // cap to keep UI stable
+  const score = Math.max(0, Math.round(10 - penalty));
+  return score;
+}
+
+function buildMatchedList({ userEnchantsMap, sig }) {
+  const saleEnchants = sigEnchantMap(sig);
+  const matched = [];
+
+  for (const [nameKey, inLraw] of userEnchantsMap.entries()) {
+    const inL = Number(inLraw) || 0;
+    const saL = Number(saleEnchants.get(nameKey) || 0);
+    if (!saL) continue;
+
+    const diff = enchantDiff(nameKey, inL, saL);
+    // UI wants { enchant, add }
+    matched.push({
+      enchant: `${displayEnchant(nameKey, saL)}`,
+      add: Math.max(0, 1.5 - diff * 0.5), // small heuristic "weight"
+      tier: tierFor(nameKey, saL),
+      label: displayEnchant(nameKey, saL),
+    });
+  }
+
+  matched.sort((a, b) => (b.add - a.add) || String(a.label).localeCompare(String(b.label)));
+  return matched;
+}
+
+function buildAllEnchants(sig) {
+  const saleEnchants = sigEnchantMap(sig);
+  const out = [];
+  for (const [k, v] of saleEnchants.entries()) {
+    out.push({ tier: tierFor(k, v), label: displayEnchant(k, v) });
+  }
+  out.sort((a, b) => (tierRank(b.tier) - tierRank(a.tier)) || a.label.localeCompare(b.label));
+  return out;
+}
+
+/* =========================
+   /api/recommend (FIXED response shape)
 ========================= */
 app.get("/api/recommend", async (req, res) => {
   try {
@@ -516,12 +573,20 @@ app.get("/api/recommend", async (req, res) => {
     const itemKey = canonicalItemKey(normalizeWeirdDigits(stripStarGlyphs(itemRaw)));
 
     if (!itemKey) {
-      return res.json({ recommended: null, top3: [], count: 0, note: "Pick an item from suggestions.", live: null });
+      return res.json({
+        recommended: null,
+        range_low: null,
+        range_high: null,
+        range_count: 0,
+        top3: [],
+        live: null,
+        note: "Pick an item from suggestions.",
+      });
     }
 
     const inputStars10 = Math.max(0, Math.min(10, Number(req.query.stars10 ?? req.query.stars ?? 0)));
     const userRarity = normUserKey(req.query.rarity || "");
-    const userWI = ["1","true","yes"].includes(String(req.query.wi ?? "").trim().toLowerCase());
+    const userWI = ["1", "true", "yes"].includes(String(req.query.wi ?? "").trim().toLowerCase());
 
     const userDye = normalizeFromOptions(req.query.dye, DYE_OPTIONS);
     const userSkin = normalizeFromOptions(req.query.skin, SKIN_OPTIONS);
@@ -568,6 +633,8 @@ app.get("/api/recommend", async (req, res) => {
       if (quality === "PERFECT") perfectPrices.push(price);
       else partialPrices.push(price);
 
+      const score = scoreCandidate({ userEnchantsMap, inputStars10, sig });
+
       candidates.push({
         uuid: r.uuid,
         item_name: stripStarGlyphs(r.item_name),
@@ -584,16 +651,30 @@ app.get("/api/recommend", async (req, res) => {
         petLevel: sigPetLevel(sig),
         petItem: sigPetItem(sig),
         quality,
+        score,
+        matched: buildMatchedList({ userEnchantsMap, sig }),
+        allEnchants: buildAllEnchants(sig),
       });
     }
+
+    // sort candidates for top3 rail: best score, newest sale, cheapest tiebreak
+    candidates.sort((a, b) =>
+      (Number(b.score) - Number(a.score)) ||
+      (Number(b.ended_ts) - Number(a.ended_ts)) ||
+      (Number(a.final_price) - Number(b.final_price))
+    );
 
     const pricePool = perfectPrices.length ? perfectPrices : partialPrices;
     const med = pricePool.length ? median(pricePool) : null;
 
+    // Range display uses percentiles for stability
+    const rangeLow = pricePool.length ? percentile(pricePool, 15) : null;
+    const rangeHigh = pricePool.length ? percentile(pricePool, 85) : null;
+
     // Live BIN scan (LBIN)
     const { rows: liveRows } = await pool.query(
       `
-      SELECT uuid, item_name, starting_bid, tier, signature, item_lore, item_bytes, last_seen_ts
+      SELECT uuid, item_name, starting_bid, end_ts, tier, signature, item_lore, item_bytes, last_seen_ts, bin
       FROM auctions
       WHERE is_ended = false
         AND bin = true
@@ -625,20 +706,20 @@ app.get("/api/recommend", async (req, res) => {
         uuid: a.uuid,
         item_name: stripStarGlyphs(a.item_name),
         price,
-        signature: sig,
-        stars10: sigStars10(sig),
-        wi: sigWI(sig),
-        quality,
+        bin: true,
+        end_ts: Number(a.end_ts || 0),
       };
-      break; // sorted by starting_bid asc
+      break;
     }
 
     return res.json({
       recommended: med,
-      median: med,
-      count: candidates.length,
+      range_low: rangeLow,
+      range_high: rangeHigh,
+      range_count: pricePool.length,
       top3: candidates.slice(0, 3),
       live: liveBest,
+      note: perfectPrices.length ? "Perfect matches prioritized." : "Closest matches shown in Market Echoes.",
     });
   } catch (err) {
     return res.status(500).json({ error: err?.message || String(err) });
