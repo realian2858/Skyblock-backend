@@ -50,6 +50,44 @@ const DINGBAT_DIGITS = "➊➋➌➍➎➏➐➑➒➓";
 const OTHER_VARIANT_CHARS_RE =
   /[\u24EA\u2460-\u2473\u24F4-\u24FF\u2776-\u277F\u2780-\u2793\u278A-\u2793]/gu;
 
+// Dungeon stars are rendered in item_name using star glyphs. Master stars are often
+// shown as circled digits (➊..➎) in the name. We treat the *name* as the
+// authoritative source when present, because NBT fields can be inconsistent.
+const NAME_STAR_RE = /([✪★☆✯✰⭐]{1,10})\s*$/u;
+const MASTER_DIGIT_MAP = new Map([
+  ["➊", 1], ["➋", 2], ["➌", 3], ["➍", 4], ["➎", 5],
+  ["①", 1], ["②", 2], ["③", 3], ["④", 4], ["⑤", 5],
+]);
+
+function parseStarsFromName(itemName) {
+  const raw = String(itemName || "");
+  const m = raw.match(NAME_STAR_RE);
+  if (!m) return null;
+
+  const starRun = m[1] || "";
+  const starCount = starRun.length;
+
+  // Find master digit anywhere before the trailing stars (e.g. "Heroic Hyperion ➋ ✪✪✪✪✪")
+  let mstars = 0;
+  for (const [ch, n] of MASTER_DIGIT_MAP.entries()) {
+    if (raw.includes(ch)) mstars = Math.max(mstars, n);
+  }
+
+  const total = Math.min(10, starCount);
+  let dstars = Math.min(5, total);
+
+  if (mstars > 0) {
+    // With a master-digit present, assume the visible stars are the 0-5 dungeon stars.
+    dstars = Math.min(5, starCount);
+    mstars = Math.min(5, mstars);
+  } else {
+    mstars = Math.max(0, total - 5);
+  }
+
+  if (dstars <= 0 && mstars <= 0) return null;
+  return { dstars, mstars };
+}
+
 
 function stripVariantDigits(s) {
   const str = String(s ?? "").normalize("NFKC");
@@ -66,6 +104,8 @@ function stripVariantDigits(s) {
    Reforge stripping
 ========================= */
 const REFORGE_PREFIXES = new Set([
+  // cosmetic/variants that users don't want in item suggestions/keys
+  "shiny",
   // bows
   "hasty","precise","rapid","spiritual","fine","neat","grand","awkward","rich","headstrong","unreal",
   // weapons
@@ -695,7 +735,12 @@ export async function buildSignature({ itemName = "", lore = "", tier = "", item
   const enchTokens = mapToEnchantTokens(enchMap);
 
 
-  const { dstars, mstars } = extractStars(extra);
+  // Stars: prefer parsing from the visible itemName when present.
+  // This avoids false-positive master stars from inconsistent NBT fields.
+  const nameStars = parseStarsFromName(itemName);
+  const extraStars = extractStars(extra);
+  const dstars = nameStars ? nameStars.dstars : extraStars.dstars;
+  const mstars = nameStars ? nameStars.mstars : extraStars.mstars;
   const hasWI = extractWitherImpactFlag(itemName, rootParsed);
   const petLevel = extractPetLevel(extra, itemName);
 
