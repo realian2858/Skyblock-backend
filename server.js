@@ -107,6 +107,7 @@ const RESERVED_SIG_KEYS = new Set([
   "tier",
   "dstars",
   "mstars",
+  "stars10", // ✅ prevent "Stars10 10" from appearing as an enchant
   "wither_impact",
   "pet_level",
   "pet_item",
@@ -160,6 +161,32 @@ function sigPetItem(sig) {
   return sigGet(sig, "pet_item") || "none";
 }
 
+/* =========================
+   Enchant catalog + bounds (clamps impossible levels like Dragon Hunter 6)
+========================= */
+const ENCHANT_CATALOG = getEnchantCatalog();
+const ENCHANT_CATALOG_NORM = ENCHANT_CATALOG.map((e) => ({
+  name: e.name,
+  key: normKey(e.name),
+  min: e.min,
+  max: e.max,
+}));
+
+const ENCHANT_BOUNDS = new Map(
+  ENCHANT_CATALOG.map((e) => {
+    const k = normalizeEnchantKey(String(e.key ?? e.name ?? ""));
+    return [k, { min: Number(e.min) || 1, max: Number(e.max) || 1 }];
+  })
+);
+
+function clampEnchantLevel(nameKey, lvl) {
+  const b = ENCHANT_BOUNDS.get(nameKey);
+  if (!b) return lvl;
+  const n = Number(lvl);
+  if (!Number.isFinite(n)) return lvl;
+  return Math.max(b.min, Math.min(b.max, n));
+}
+
 function sigEnchantMap(sig) {
   const out = new Map();
   const parts = String(sig || "").split("|");
@@ -173,11 +200,14 @@ function sigEnchantMap(sig) {
 
     if (RESERVED_SIG_KEYS.has(kRaw)) continue;
 
-    const lv = Number(vRaw);
+    let lv = Number(vRaw);
     if (!Number.isFinite(lv) || lv <= 0) continue;
 
     const nameKey = normalizeEnchantKey(String(kRaw).replace(/_/g, " "));
     if (!nameKey) continue;
+
+    // ✅ clamp to known max (kills Dragon Hunter 6, etc)
+    lv = clampEnchantLevel(nameKey, lv);
 
     const prev = out.get(nameKey);
     if (!prev || lv > prev) out.set(nameKey, lv);
@@ -479,7 +509,6 @@ function strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters }) {
   return anyPartial ? "PARTIAL" : "PERFECT";
 }
 
-
 /* =========================
    Scoring (only called after strictMatchQuality != NONE)
    Produces matched list with proper tiers:
@@ -554,6 +583,15 @@ function scoreAfterStrict({ userEnchantsMap, inputStars10, sig, filters }) {
 
   matched.sort((a, b) => (b.add ?? 0) - (a.add ?? 0));
   return { score, matched, saleEnchants, unverifiable: vf.unverifiable };
+}
+
+/* =========================
+   Enchant display ordering (AAA -> AA -> A -> B -> BB -> MISC)
+========================= */
+const TIER_ORDER = { AAA: 0, AA: 1, A: 2, B: 3, BB: 4, PARTIAL: 5, MISC: 9 };
+function tierRank(t) {
+  const k = String(t || "").toUpperCase();
+  return TIER_ORDER[k] ?? 9;
 }
 
 /* =========================
@@ -663,10 +701,12 @@ app.get("/api/recommend", async (req, res) => {
 
         score: sc.score,
         matched: sc.matched,
-        allEnchants: Array.from(sc.saleEnchants.entries()).map(([k, v]) => ({
-          tier: tierFor(k, v),
-          label: displayEnchant(k, v),
-        })),
+        allEnchants: Array.from(sc.saleEnchants.entries())
+          .map(([k, v]) => {
+            const tier = tierFor(k, v);
+            return { tier, label: displayEnchant(k, v) };
+          })
+          .sort((a, b) => (tierRank(a.tier) - tierRank(b.tier)) || a.label.localeCompare(b.label)),
         unverifiable: sc.unverifiable,
         quality: q,
       });
@@ -741,6 +781,9 @@ app.get("/api/recommend", async (req, res) => {
           })) || ""
         ).trim();
       }
+
+      // ✅ LBIN fallback signature if bytes/lore not present
+      if (!sig) sig = buildLbinFallbackSignature({ itemName: a.item_name || "", tier: a.tier || "" });
       if (!sig) continue;
 
       const q = strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters });
@@ -851,14 +894,6 @@ app.get("/api/items", async (req, res) => {
 /* =========================
    Enchant autocomplete
 ========================= */
-const ENCHANT_CATALOG = getEnchantCatalog();
-const ENCHANT_CATALOG_NORM = ENCHANT_CATALOG.map((e) => ({
-  name: e.name,
-  key: normKey(e.name),
-  min: e.min,
-  max: e.max,
-}));
-
 app.get("/api/enchants", (req, res) => {
   const q = normKey(req.query.q || "");
   const LIMIT = Math.max(5, Math.min(60, Number(req.query.limit || 30)));
@@ -906,7 +941,3 @@ const PORT = Number(process.env.PORT || 8080);
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
-
-
-
-
