@@ -95,16 +95,19 @@ const VARIANT_DIGITS_RE = /[\u24EA\u2460-\u2473\u2776-\u277F\u2780-\u2793]/g;
 
 // keep your existing OTHER_VARIANT_CHARS_RE if you already have it,
 // or use this safe default:
-const OTHER_VARIANT_CHARS_RE = /[•●]/g;
+// keep your existing OTHER_VARIANT_CHARS_RE above (do NOT redeclare it here)
+const BULLET_VARIANT_RE = /[•●]/g;
 
 function stripVariantDigits(s) {
   return String(s ?? "")
     .normalize("NFKC")
     .replace(VARIANT_DIGITS_RE, " ")
-    .replace(OTHER_VARIANT_CHARS_RE, " ")
+    .replace(OTHER_VARIANT_CHARS_RE, " ")  // uses the FIRST one you defined earlier
+    .replace(BULLET_VARIANT_RE, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
+
 
 
 
@@ -784,5 +787,6 @@ export async function buildSignature({ itemName = "", lore = "", tier = "", item
 
   return [...parts, ...enchTokens].join("|");
 }
+
 
 
