@@ -197,12 +197,10 @@ function renderStarsHtml(dungeonStars, masterStars) {
   // Desired header format: (item) (stars) (master-star number)
   // Example: "Withered Dark Claymore ✪✪✪✪✪ [M5]"
   const dungeonIcons = "✪".repeat(ds);
-  const masterIcons = "✪".repeat(ms);
+  const badge = ms > 0 ? `<span class="master-badge">[M${ms}]</span>` : "";
 
-  const badge = ms > 0 ? `<span class="master-badge">M${ms}</span>` : "";
-
-  // Render dungeon stars + (optional) master stars (styled separately)
-  return `<span class="sb-stars"><span class="dstars">${escapeHtml(dungeonIcons)}</span><span class="mstars">${escapeHtml(masterIcons)}</span></span>${badge}`;
+  // IMPORTANT: Master stars are shown ONLY as [M#] (no extra star icons).
+  return `<span class="sb-stars"><span class="dstars">${escapeHtml(dungeonIcons)}</span></span>${badge}`;
 }
 
 
@@ -896,7 +894,7 @@ function renderAdvanced(outEl, data) {
     </div>
 
 
-    <div class="out-sub">${data?.note ? escapeHtml(data.note) : "Closest matches shown in Market Echoes."}</div>
+    <div class="out-sub">${data?.note ? escapeHtml(data.note) : "Based on the closest matching sales and live auctions."}</div>
   `;
 
 
