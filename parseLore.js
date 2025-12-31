@@ -24,7 +24,7 @@ import { parse as parseNbt } from "prismarine-nbt";
 export function cleanText(s) {
   let x = String(s ?? "").normalize("NFKC");
   x = x.replace(/§./g, ""); // MC color codes
-  x = x.replace(/[']/g, "'"); // normalize apostrophes
+  x = x.replace(/[’]/g, "'"); // normalize apostrophes
   x = x.replace(/[^\p{L}\p{N}\s']/gu, " "); // letters/numbers/spaces/apostrophes
   x = x.replace(/\s+/g, " ").trim();
   return x;
@@ -34,7 +34,7 @@ export function cleanText(s) {
 export function normKey(s) {
   return cleanText(s)
     .toLowerCase()
-    .replace(/['']/g, "")
+    .replace(/['’]/g, "")
     .replace(/[-_]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -68,6 +68,8 @@ function stripVariantDigits(s) {
 const REFORGE_PREFIXES = new Set([
   // bows
   "hasty","precise","rapid","spiritual","fine","neat","grand","awkward","rich","headstrong","unreal",
+  // cosmetic
+  "shiny",
   // weapons
   "fabled","withered","heroic","spicy","sharp","legendary","dirty","fanged","suspicious","bulky",
   "gilded","warped","coldfused","fair","gentle","odd","fast","jerry's",
@@ -90,7 +92,7 @@ function tokenize(s) {
 
 function stripReforgePrefixTokens(tokens) {
   const t = Array.isArray(tokens) ? tokens.slice() : tokenize(tokens);
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < 3; i++) {
     if (t.length > 1 && REFORGE_PREFIXES.has(t[0])) t.shift();
     else break;
   }
@@ -594,12 +596,40 @@ function extractEnchants(extra) {
 }
 
 
-function extractStars(extra) {
+function extractStars(extra, itemName = "", loreLines = []) {
+  // Prefer glyph-based parsing from display name / lore when available.
+  // Dungeon stars: ✪ (0–5)
+  // Master stars are shown as circled digits: ➊➋➌➍➎ (1–5)
+  const nameStr = String(itemName || "");
+  const loreStr = Array.isArray(loreLines) ? loreLines.join("\n") : String(loreLines || "");
+
+  const hasStarGlyphs = /[✪★☆✯✰]/.test(nameStr) || /[✪★☆✯✰]/.test(loreStr);
+  const dGlyph = (nameStr.match(/[✪★☆✯✰]/g) || []).length || (loreStr.match(/[✪★☆✯✰]/g) || []).length;
+
+  // Master digit glyphs (only ➊..➎ count; do NOT treat "○" or other circles as master stars)
+  const masterGlyphMatch = nameStr.match(/[➊➋➌➍➎]/) || loreStr.match(/[➊➋➌➍➎]/);
+  const masterGlyphVal = masterGlyphMatch ? "➊➋➌➍➎".indexOf(masterGlyphMatch[0]) + 1 : 0;
+
+  // If glyphs exist, trust them.
+  if (hasStarGlyphs || masterGlyphVal > 0) {
+    const dstars = Math.max(0, Math.min(5, dGlyph));
+    const mstars = Math.max(0, Math.min(5, masterGlyphVal));
+    return { dstars, mstars };
+  }
+
+  // Fallback to NBT only when this looks like a dungeon item.
   const dRaw = Number(extra?.dungeon_item_level ?? 0);
   const uRaw = Number(extra?.upgrade_level ?? 0);
 
   const dFinite = Number.isFinite(dRaw) ? Math.trunc(dRaw) : 0;
   const uFinite = Number.isFinite(uRaw) ? Math.trunc(uRaw) : 0;
+
+  // Guard: upgrade_level is used for many non-dungeon systems; ignore it unless dungeon_item_level exists.
+  const looksDungeon = dFinite > 0;
+
+  if (!looksDungeon) {
+    return { dstars: 0, mstars: 0 };
+  }
 
   // Hypixel is inconsistent:
   // - some items store TOTAL stars (0–10) in dungeon_item_level
@@ -616,16 +646,16 @@ function extractStars(extra) {
     return { dstars: Math.min(5, total), mstars: Math.max(0, total - 5) };
   }
 
-  const dstars = Math.max(0, Math.min(5, dFinite));
-
-  // Prefer upgrade_level if present (it represents total 0–10)
+  // Prefer upgrade_level if present (it represents total 0–10) BUT only for dungeon items.
   if (uFinite > 0) {
     const total = Math.max(0, Math.min(10, uFinite));
     return { dstars: Math.min(5, total), mstars: Math.max(0, total - 5) };
   }
 
+  const dstars = Math.max(0, Math.min(5, dFinite));
   return { dstars, mstars: 0 };
 }
+
 
 
 function extractPetLevel(extra, itemName) {
@@ -695,7 +725,7 @@ export async function buildSignature({ itemName = "", lore = "", tier = "", item
   const enchTokens = mapToEnchantTokens(enchMap);
 
 
-  const { dstars, mstars } = extractStars(extra);
+  const { dstars, mstars } = extractStars(extra, itemName, loreLines);
   const hasWI = extractWitherImpactFlag(itemName, rootParsed);
   const petLevel = extractPetLevel(extra, itemName);
 
