@@ -526,7 +526,7 @@ function scorePartial({ userEnchantsMap, inputStars10, sig, filters }) {
     if (!inTier || !saTier || inTier === "MISC" || saTier === "MISC") continue;
 
 
-    const diff = Math.abs(tierRank(saTier) - tierRank(inTier));
+    const diff = Math.abs(saleLvl - inL);
 
 
     let tierLabel = "MISC";
