@@ -1,4 +1,3 @@
-\
 // public/script.js (FULL REWRITE v3)
 // Changes in this rewrite:
 // ✅ Stars display: ALWAYS shows 5 ✪ icons when starred, plus master-star number (if any)
@@ -177,14 +176,15 @@ function clampInt(n, lo, hi) {
 function renderStarsHtml(dungeonStars, masterStars) {
   const ds = clampInt(dungeonStars, 0, 5);
   const ms = clampInt(masterStars, 0, 5);
-
   if (ds <= 0 && ms <= 0) return "";
 
-  const icons = ds > 0 ? "✪".repeat(ds) : "";
-  const m = ms > 0 ? `<span class="mstar-num">(${ms})</span>` : "";
-  return `<span class="sb-stars">${escapeHtml(icons)}</span>${m ? " " + m : ""}`;
-}
+  // Display format requested: (dungeonStars)(masterStars)
+  const num = `${ds}${ms > 0 ? `(${ms})` : ""}`;
 
+  // Optional icon row (total stars), kept subtle for readability
+  const icons = "✪".repeat(Math.min(10, ds + ms));
+  return `<span class="sb-stars">${escapeHtml(icons)}</span> <span class="stars-num">${escapeHtml(num)}</span>`;
+}
 
 /* =========================
    Enchant rendering
