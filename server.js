@@ -380,14 +380,30 @@ function applyVerifiedFiltersOrNull(sig, filters) {
    Strict match quality (PERFECT / PARTIAL / NONE)
 ========================= */
 function strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters }) {
-  if (!sig) return "NONE";
+  const wantsStarFiltering = (Number(inputStars10) || 0) > 0;
+  const wantsEnchantFiltering = !!userEnchantsMap && userEnchantsMap.size > 0;
+
+  const wantsCosmeticFiltering =
+    (!!filters?.userDye && filters.userDye !== "none") ||
+    (!!filters?.userSkin && filters.userSkin !== "none") ||
+    (!!filters?.userPetSkin && filters.userPetSkin !== "none") ||
+    (Number(filters?.userPetLevel || 0) > 0) ||
+    (!!filters?.userPetItem && filters.userPetItem !== "none") ||
+    !!filters?.userWI ||
+    !!filters?.userRarity;
+
+  const needsSignature = wantsStarFiltering || wantsEnchantFiltering || wantsCosmeticFiltering;
+
+  // ✅ If user isn't filtering by anything that requires signature,
+  // let signature-less auctions pass as "PERFECT" (so LBIN can work).
+  if (!sig) return needsSignature ? "NONE" : "PERFECT";
 
   const vf = applyVerifiedFiltersOrNull(sig, filters);
   if (!vf.ok) return "NONE";
 
   let anyPartial = false;
 
-  // Stars rule
+  // stars: diff 0 exact, diff 1 partial, diff >=2 none
   const inStars = Number(inputStars10) || 0;
   if (inStars > 0) {
     const saStars = sigStars10(sig);
@@ -396,7 +412,7 @@ function strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters }) {
     else if (diff >= 2) return "NONE";
   }
 
-  // Enchants rule
+  // enchants: diff 0 exact, diff 1 partial, diff >=2 none
   const saleEnchants = sigEnchantMap(sig);
 
   for (const [nameKey, inputLvlRaw] of userEnchantsMap.entries()) {
@@ -404,19 +420,16 @@ function strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters }) {
     if (!Number.isFinite(inL) || inL <= 0) continue;
 
     const saleLvl = Number(saleEnchants.get(nameKey) || 0);
-    if (!saleLvl) return "NONE"; // requested enchant missing => not a match
+    if (!saleLvl) return "NONE";
 
-    const inTier = tierFor(nameKey, inL);
-    const saTier = tierFor(nameKey, saleLvl);
-    if (!inTier || !saTier || inTier === "MISC" || saTier === "MISC") return "NONE";
-
-    const diff = Math.abs(saleLvl - inL);
-    if (diff === 1) anyPartial = true;
-    else if (diff >= 2) return "NONE";
+    const lvlDiff = Math.abs(saleLvl - inL);
+    if (lvlDiff === 1) anyPartial = true;
+    else if (lvlDiff >= 2) return "NONE";
   }
 
   return anyPartial ? "PARTIAL" : "PERFECT";
 }
+
 
 /* =========================
    Scoring (only called after strictMatchQuality != NONE)
@@ -799,3 +812,4 @@ const PORT = Number(process.env.PORT || 8080);
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
+
