@@ -572,9 +572,9 @@ app.get("/api/recommend", async (req, res) => {
         range_low: null,
         range_high: null,
         range_count: 0,
-        top3: [],
         count: 0,
         note: "Pick an item from suggestions.",
+        top3: [],
         live: null,
       });
     }
@@ -611,6 +611,9 @@ app.get("/api/recommend", async (req, res) => {
       userPetItem,
     };
 
+    /* =========================
+       HISTORICAL SALES (candidates)
+    ========================= */
     const since = now - 120 * 24 * 60 * 60 * 1000;
 
     const { rows } = await pool.query(
@@ -632,7 +635,7 @@ app.get("/api/recommend", async (req, res) => {
       if (!Number.isFinite(price) || price <= 0) continue;
 
       const sig = String(r.signature || "").trim();
-      if (!sig) continue; // sales should have sig; if not, skip for correctness
+      if (!sig) continue; // sales should have sig
 
       const q = strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters });
       if (q === "NONE") continue;
@@ -674,6 +677,9 @@ app.get("/api/recommend", async (req, res) => {
 
     /* =========================
        Recommended price (TOP 10 ALWAYS)
+       - pick TOP 10 candidates (by your scoring sort)
+       - median(perfect) else median(partial)
+       - range is min/max of same pool
     ========================= */
     const top10 = candidates.slice(0, 10);
 
@@ -691,8 +697,13 @@ app.get("/api/recommend", async (req, res) => {
     const rangeLow = pricePool.length ? Math.min(...pricePool) : null;
     const rangeHigh = pricePool.length ? Math.max(...pricePool) : null;
 
+    const note = candidates.length
+      ? null
+      : "No sales found that match (diff>=2 is excluded) within the selected history window.";
+
     /* =========================
        LIVE BIN (LBIN)
+       - cheapest PERFECT else cheapest PARTIAL
     ========================= */
     const { rows: liveRows } = await pool.query(
       `
@@ -762,10 +773,9 @@ app.get("/api/recommend", async (req, res) => {
 
     const liveBest = bestPerfect || bestPartial || null;
 
-    const note = candidates.length
-      ? null
-      : "No sales found that match (diff>=2 is excluded) within the selected history window.";
-
+    /* =========================
+       Response (fields unchanged)
+    ========================= */
     return res.json({
       recommended: med,
       median: med,
@@ -781,7 +791,6 @@ app.get("/api/recommend", async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
-
 
 
     /* =========================
@@ -990,5 +999,6 @@ const PORT = Number(process.env.PORT || 8080);
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
+
 
 
