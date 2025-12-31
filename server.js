@@ -1,17 +1,21 @@
-// server.js (v10 - PET ITEM WORKING + petitems autocomplete + no liveSignature feature)
-// ✅ Pet item filter verified via signature token: pet_item:<key>
-// ✅ Adds /api/petitems for autocomplete
-// ✅ Recommended: median(PERFECT) else median(PARTIAL) else null
-// ✅ Live BIN: cheapest PERFECT else cheapest PARTIAL
-// ✅ Rebuilds live auction signature if missing (BIN scan)
-
+// server.js (clean rewrite - fixes lvlDiff redeclare + strict matching rules)
+//
+// Key rules enforced everywhere:
+// - enchant level diff 0 => PERFECT (gold)
+// - enchant level diff 1 => PARTIAL (purple)
+// - enchant level diff >=2 => NOT A MATCH (skip auction entirely)
+// Same for stars10 (0/1/>=2).
+//
+// Live BIN (LBIN):
+// - cheapest PERFECT else cheapest PARTIAL
+// Recommended price:
+// - median(PERFECT) else median(PARTIAL) else null
 
 import path from "path";
 import { fileURLToPath } from "url";
 import express from "express";
 import pg from "pg";
 import dotenv from "dotenv";
-
 
 import {
   normKey,
@@ -25,37 +29,27 @@ import {
   getEnchantCatalog,
 } from "./parseLore.js";
 
-
 dotenv.config();
-
 
 const app = express();
 app.use(express.json());
-
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 app.use(express.static(path.join(__dirname, "public")));
 
-
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
-
 
 /* =========================
    Display helper (prevents double star icons)
 ========================= */
 function stripStarGlyphs(s) {
-  // Hypixel item_name often includes dungeon stars and master-star circled digits.
-  // We strip all of them so the UI renders *only* from signature-derived dstars/mstars.
   return String(s || "")
-    // star glyphs + dot
     .replace(/[✪★☆✯✰⭐●•]+/g, "")
-    // circled digits (①..⑳) and dingbat circled digits (➀..➓, ➊..➓)
     .replace(/[\u2460-\u2473\u2776-\u277F\u2780-\u2793]/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
-
 
 /* =========================
    Signature helpers
@@ -72,7 +66,6 @@ const RESERVED_SIG_KEYS = new Set([
   "petskin",
 ]);
 
-
 function sigGet(sig, key) {
   const parts = String(sig || "").split("|");
   for (const p of parts) {
@@ -85,7 +78,6 @@ function sigGet(sig, key) {
   return "";
 }
 
-
 function sigDungeonStars(sig) {
   return Math.max(0, Math.min(5, Number(sigGet(sig, "dstars")) || 0));
 }
@@ -95,6 +87,7 @@ function sigMasterStars(sig) {
 function sigStars10(sig) {
   return Math.max(0, Math.min(10, sigDungeonStars(sig) + sigMasterStars(sig)));
 }
+
 function sigWI(sig) {
   return sigGet(sig, "wither_impact") === "1";
 }
@@ -118,32 +111,31 @@ function sigPetItem(sig) {
   return sigGet(sig, "pet_item") || "none";
 }
 
-
 function sigEnchantMap(sig) {
   const out = new Map();
   const parts = String(sig || "").split("|");
+
   for (const p of parts) {
     const i = p.indexOf(":");
     if (i <= 0) continue;
+
     const kRaw = p.slice(0, i);
     const vRaw = p.slice(i + 1);
-    if (RESERVED_SIG_KEYS.has(kRaw)) continue;
 
+    if (RESERVED_SIG_KEYS.has(kRaw)) continue;
 
     const lv = Number(vRaw);
     if (!Number.isFinite(lv) || lv <= 0) continue;
 
-
     const nameKey = normalizeEnchantKey(String(kRaw).replace(/_/g, " "));
     if (!nameKey) continue;
-
 
     const prev = out.get(nameKey);
     if (!prev || lv > prev) out.set(nameKey, lv);
   }
+
   return out;
 }
-
 
 /* =========================
    Stats helpers
@@ -155,17 +147,6 @@ function median(nums) {
   const mid = Math.floor(n / 2);
   return n % 2 ? a[mid] : Math.round((a[mid - 1] + a[mid]) / 2);
 }
-
-
-/* =========================
-   Tier rank (for diff calc)
-========================= */
-const TIER_RANK = { BB: 0, B: 1, A: 2, AA: 3, AAA: 4, MISC: -1 };
-function tierRank(t) {
-  const k = String(t || "").toUpperCase();
-  return TIER_RANK[k] ?? -1;
-}
-
 
 /* =========================
    Input normalize
@@ -185,7 +166,6 @@ function parseUserPetLevel(raw) {
   return level >= 1 && level <= 200 ? level : 0;
 }
 
-
 /* =========================
    Options helpers
 ========================= */
@@ -201,12 +181,10 @@ function normalizeFromOptions(raw, options) {
   const byKey = options.find((o) => o.key === k);
   if (byKey) return byKey.key;
 
-
   const nk = normKey(raw);
   const byLabel = options.find((o) => normKey(o.label) === nk);
   return byLabel ? byLabel.key : k;
 }
-
 
 /* =========================
    PET ITEM OPTIONS + endpoint
@@ -273,10 +251,7 @@ const PET_ITEM_LABELS = [
   "Washed-up Souvenir",
   "Yellow Bandana",
 ];
-
-
 const PETITEM_OPTIONS = listToOptions(PET_ITEM_LABELS);
-
 
 app.get("/api/petitems", (req, res) => {
   const q = normKey(req.query.q || "");
@@ -287,9 +262,8 @@ app.get("/api/petitems", (req, res) => {
   res.json({ items: items.slice(0, limit) });
 });
 
-
 /* =========================
-   Cosmetics options (same as your list)
+   Cosmetics options (your lists kept)
 ========================= */
 const DYE_LABELS = [
   "Aquamarine Dye","Archfiend Dye","Aurora Dye","Bingo Blue Dye","Black Ice Dye","Bone Dye","Brick Red Dye",
@@ -315,8 +289,7 @@ const SKIN_LABELS = [
   "Shimmer Skin","Sly Fox Skin","Smoldering Ember Skin","Snowglobe Skin","Spirit Skin","Starknight Skin",
   "Thief Skin","True Warden Skin"
 ];
-const PET_SKIN_LABELS = [
-  "Anubis Golden Dragon Skin","Ancient Golden Dragon Skin","Super Plushie Ender Dragon Skin",
+const PET_SKIN_LABELS = ["Anubis Golden Dragon Skin","Ancient Golden Dragon Skin","Super Plushie Ender Dragon Skin",
   "Pastel Ender Dragon Skin","Undead Ender Dragon Skin","Neon Blue Ender Dragon Skin",
   "Neon Red Ender Dragon Skin","Neon Green Ender Dragon Skin","Neon Purple Ender Dragon Skin",
   "Neon Yellow Ender Dragon Skin","Neon Orange Ender Dragon Skin","Baby Blue Ender Dragon Skin",
@@ -356,7 +329,7 @@ const PET_SKIN_LABELS = [
   "Harlequin Flying Fish Skin","Chromari Squid Skin","Glow Squid Skin","Real Grandma Wolf Skin","End Golem Skin",
   "Miner Mole Skin","Choco Magma Cube Skin","Pot O' Gold Rock Skin","Candy Cane Rock Skin","Ice Rock Skin",
   "Black Widow Spider Skin","Peacock Spider Skin","Pink Tarantula Skin","Greenbottle Tarantula Skin",
-  "Cosmic Blue Whale Skin","Megalodon Shark Skin","Tiger Shark Skin","Great White Shark Magma Lord Skin","Whale Shark Skin",
+  "Cosmic Blue Whale Skin","Megalodon Shark Skin","Tiger Shark Skin","Great White Shark Skin","Whale Shark Skin",
   "Neon Blue Megalodon Skin","Baby Megalodon Skin","Chroma Sheep Skin","White Wooly Sheep Skin","Black Wooly Sheep Skin",
   "Chromatic Crush Sheep Skin","Purple Crushed Sheep Skin","Blue Crush Sheep Skin",
   "Luminescent Jellyfish Skin","RGBee Bee Skin","Loyalty Kuudra Skin",
@@ -368,18 +341,15 @@ const PET_SKIN_LABELS = [
   "Baby Wither Skeleton"
 ];
 
-
 const DYE_OPTIONS = listToOptions(DYE_LABELS);
 const SKIN_OPTIONS = listToOptions(SKIN_LABELS);
 const PETSKIN_OPTIONS = listToOptions(PET_SKIN_LABELS);
 
-
 /* =========================
-   Filter verification
+   Filter verification (strict)
 ========================= */
 function applyVerifiedFiltersOrNull(sig, filters) {
   if (!sig) return { ok: true, unverifiable: true };
-
 
   const {
     userWI,
@@ -391,7 +361,6 @@ function applyVerifiedFiltersOrNull(sig, filters) {
     userPetItem,
   } = filters;
 
-
   if (userWI && !sigWI(sig)) return { ok: false, unverifiable: false };
   if (userRarity && sigTier(sig) !== userRarity) return { ok: false, unverifiable: false };
   if (userDye && userDye !== "none" && sigDye(sig) !== userDye) return { ok: false, unverifiable: false };
@@ -399,31 +368,26 @@ function applyVerifiedFiltersOrNull(sig, filters) {
   if (userPetSkin && userPetSkin !== "none" && sigPetSkin(sig) !== userPetSkin) return { ok: false, unverifiable: false };
   if (userPetLevel > 0 && sigPetLevel(sig) < userPetLevel) return { ok: false, unverifiable: false };
 
-
-  // Pet Item filter (strict)
+  // Pet Item filter must match exactly
   if (userPetItem && userPetItem !== "none" && sigPetItem(sig) !== userPetItem) {
     return { ok: false, unverifiable: false };
   }
 
-
   return { ok: true, unverifiable: false };
 }
 
-
 /* =========================
-   Strict match quality
+   Strict match quality (PERFECT / PARTIAL / NONE)
 ========================= */
 function strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters }) {
   if (!sig) return "NONE";
 
-
   const vf = applyVerifiedFiltersOrNull(sig, filters);
   if (!vf.ok) return "NONE";
 
-
   let anyPartial = false;
 
-
+  // Stars rule
   const inStars = Number(inputStars10) || 0;
   if (inStars > 0) {
     const saStars = sigStars10(sig);
@@ -432,142 +396,103 @@ function strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters }) {
     else if (diff >= 2) return "NONE";
   }
 
-
+  // Enchants rule
   const saleEnchants = sigEnchantMap(sig);
-
 
   for (const [nameKey, inputLvlRaw] of userEnchantsMap.entries()) {
     const inL = Number(inputLvlRaw);
     if (!Number.isFinite(inL) || inL <= 0) continue;
 
-
     const saleLvl = Number(saleEnchants.get(nameKey) || 0);
-    if (!saleLvl) return "NONE";
-
+    if (!saleLvl) return "NONE"; // requested enchant missing => not a match
 
     const inTier = tierFor(nameKey, inL);
     const saTier = tierFor(nameKey, saleLvl);
     if (!inTier || !saTier || inTier === "MISC" || saTier === "MISC") return "NONE";
 
-
-    const lvlDiff = Math.abs(saleLvl - inL);
-    if (lvlDiff === 1) anyPartial = true;
-    else if (lvlDiff >= 2) return "NONE";
+    const diff = Math.abs(saleLvl - inL);
+    if (diff === 1) anyPartial = true;
+    else if (diff >= 2) return "NONE";
   }
-
 
   return anyPartial ? "PARTIAL" : "PERFECT";
 }
 
-
 /* =========================
-   Sales scoring (looser echoes)
+   Scoring (only called after strictMatchQuality != NONE)
+   Produces matched list with proper tiers:
+   - EXACT: gold (uses real tier)
+   - PARTIAL: purple ("PARTIAL")
 ========================= */
-function tierBonusForTier(tier) {
-  const t = String(tier || "").toUpperCase();
-  return t === "AAA" ? 8 : t === "AA" ? 5 : t === "A" ? 3 : t === "B" ? 2 : t === "BB" ? 1 : 0;
+const TIER_BONUS = { BB: 1, B: 2, A: 3, AA: 5, AAA: 8, PARTIAL: 0.6, MISC: 0 };
+function tierBonusForTier(t) {
+  const k = String(t || "").toUpperCase();
+  return TIER_BONUS[k] ?? 0;
 }
-const W_EXACT_STARS = tierBonusForTier("AAA");
-const W_PARTIAL_STARS = tierBonusForTier("A");
-
 
 function starsScore(inputStars10, saleStars10) {
   const inS = Math.max(0, Math.min(10, Number(inputStars10) || 0));
   const saS = Math.max(0, Math.min(10, Number(saleStars10) || 0));
-  if (inS <= 0) return { add: 0, tier: null, label: null };
-
+  if (inS <= 0) return null;
 
   const diff = Math.abs(saS - inS);
-  if (diff === 0) return { add: W_EXACT_STARS, tier: "AAA", label: `Stars ${inS} → ${saS}` };
-  if (diff === 1) return { add: W_PARTIAL_STARS, tier: "PARTIAL", label: `Stars ${inS} → ${saS}` };
-  return { add: 0, tier: "MISC", label: `Stars ${inS} → ${saS}` };
+  if (diff === 0) return { tier: "AAA", add: 8, label: `Stars ${inS} → ${saS}` };
+  if (diff === 1) return { tier: "PARTIAL", add: 1.2, label: `Stars ${inS} → ${saS}` };
+  return null; // diff>=2 should never be scored (strict already dropped)
 }
 
-
-function scorePartial({ userEnchantsMap, inputStars10, sig, filters }) {
-  const matched = [];
-  let score = 0;
-
-
+function scoreAfterStrict({ userEnchantsMap, inputStars10, sig, filters }) {
   const vf = applyVerifiedFiltersOrNull(sig, filters);
   if (!vf.ok) return null;
 
+  const matched = [];
+  let score = 0;
 
-  if (vf.unverifiable) score -= 2;
-  else score += 2;
+  // Slight penalty if unverifiable (should be rare now, but kept)
+  score += vf.unverifiable ? -2 : 2;
 
-
-  if (Number(inputStars10) > 0) {
-    if (!sig) {
-      score -= 1;
-    } else {
-      const st = starsScore(inputStars10, sigStars10(sig));
-      score += st.add;
-      if (st.label) matched.push({ enchant: { tier: st.tier, label: st.label }, add: st.add });
-    }
+  // Stars scoring
+  const st = starsScore(inputStars10, sigStars10(sig));
+  if (st) {
+    score += st.add;
+    matched.push({ enchant: { tier: st.tier, label: st.label }, add: st.add });
   }
 
-
-  const saleEnchants = sig ? sigEnchantMap(sig) : new Map();
-
+  const saleEnchants = sigEnchantMap(sig);
 
   for (const [nameKey, inputLvlRaw] of userEnchantsMap.entries()) {
     const inL = Number(inputLvlRaw);
     if (!Number.isFinite(inL) || inL <= 0) continue;
 
-
-    if (!sig) {
-      score -= 0.4;
-      continue;
-    }
-
-
     const saleLvl = Number(saleEnchants.get(nameKey) || 0);
-    if (!saleLvl) continue;
+    if (!saleLvl) continue; // strict already ensures if requested it exists; safety.
 
+    const diff = Math.abs(saleLvl - inL);
+    if (diff >= 2) continue; // safety; strict should have dropped
 
     const inTier = tierFor(nameKey, inL);
-    const saTier = tierFor(nameKey, saleLvl);
-    if (!inTier || !saTier || inTier === "MISC" || saTier === "MISC") continue;
+    if (!inTier || inTier === "MISC") continue;
 
-    // IMPORTANT: user-facing matching rules are based on *level* difference:
-    // - diff 0 => EXACT (gold)
-    // - diff 1 => PARTIAL (purple)
-    // - diff >=2 => NOT A MATCH (and the strict filter will already drop the auction)
-    const lvlDiff = Math.abs(Number(saleLvl) - Number(inL));
+    let tierLabel, add;
 
-
-    // IMPORTANT:
-    // - level diff 0 => EXACT (gold)
-    // - level diff 1 => PARTIAL (purple)
-    // - level diff >=2 => NOT A MATCH (but strict filter should have skipped already)
-    const lvlDiff = Math.abs((saleLvl || 0) - (inL || 0));
-    if (lvlDiff >= 2) continue;
-
-    let tierLabel = "MISC";
-    let add = 0;
-
-    if (lvlDiff === 0) {
-      tierLabel = inTier;
+    if (diff === 0) {
+      tierLabel = inTier;                     // gold uses real tier (AAA/AA/A/B/BB)
       add = tierBonusForTier(inTier) + 1.2;
     } else {
-      tierLabel = "PARTIAL";
-      add = 0.6;
+      tierLabel = "PARTIAL";                  // purple
+      add = tierBonusForTier("PARTIAL");
     }
 
-    // Slightly reward higher requested tiers, but keep it bounded.
+    // bounded bonus for higher requested levels (kept mild)
     add *= 1 + Math.min(10, Math.max(0, inL - 1)) * 0.08;
-
 
     score += add;
     matched.push({ enchant: { tier: tierLabel, label: displayEnchant(nameKey, inL) }, add });
   }
 
-
   matched.sort((a, b) => (b.add ?? 0) - (a.add ?? 0));
   return { score, matched, saleEnchants, unverifiable: vf.unverifiable };
 }
-
 
 /* =========================
    /api/recommend
@@ -576,45 +501,33 @@ app.get("/api/recommend", async (req, res) => {
   try {
     const now = Date.now();
 
-
     const itemInput = String(req.query.item || "");
     const itemKey = canonicalItemKey(itemInput);
     if (!itemKey) {
-      return res.json({ recommended: null, top3: [], count: 0, note: "Pick an item from suggestions." });
+      return res.json({
+        recommended: null,
+        top3: [],
+        count: 0,
+        note: "Pick an item from suggestions.",
+        live: null,
+      });
     }
-
 
     const inputStars10 = Math.max(0, Math.min(10, Number(req.query.stars10 ?? req.query.stars ?? 0)));
     const userRarity = normUserKey(req.query.rarity || "");
     const userWI = String(req.query.wi ?? "") === "1" || String(req.query.wi ?? "") === "true";
 
-
     const userDye = normalizeFromOptions(req.query.dye, DYE_OPTIONS);
     const userSkin = normalizeFromOptions(req.query.skin, SKIN_OPTIONS);
     const userPetSkin = normalizeFromOptions(req.query.petskin ?? req.query.petSkin, PETSKIN_OPTIONS);
     const userPetLevel = parseUserPetLevel(req.query.petlvl ?? req.query.petLevel);
-
-
-    // ✅ pet item (accept petitem or petItem)
     const userPetItem = normalizeFromOptions(req.query.petitem ?? req.query.petItem, PETITEM_OPTIONS);
-
 
     const userEnchantsMap = parseEnchantList(req.query.enchants || "");
 
-
-    const filters = {
-      userWI,
-      userRarity,
-      userDye,
-      userSkin,
-      userPetSkin,
-      userPetLevel,
-      userPetItem,
-    };
-
+    const filters = { userWI, userRarity, userDye, userSkin, userPetSkin, userPetLevel, userPetItem };
 
     const since = now - 120 * 24 * 60 * 60 * 1000;
-
 
     const { rows } = await pool.query(
       `
@@ -628,32 +541,25 @@ app.get("/api/recommend", async (req, res) => {
       [itemKey, since]
     );
 
-
     const candidates = [];
     const perfectPrices = [];
     const partialPrices = [];
-
 
     for (const r of rows) {
       const price = Number(r.final_price || 0);
       if (!Number.isFinite(price) || price <= 0) continue;
 
-
       const sig = String(r.signature || "").trim();
+      if (!sig) continue; // sales should have sig; if not, skip for correctness
 
-
-      // STRICT FILTERING:
-      // - If any user enchant differs by >=2 tiers => NOT A MATCH (skip entirely)
-      // - If differs by 1 tier => PARTIAL (purple)
-      // - Only exact tier matches are PERFECT (gold)
       const q = strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters });
       if (q === "NONE") continue;
+
       if (q === "PERFECT") perfectPrices.push(price);
-      else if (q === "PARTIAL") partialPrices.push(price);
+      else partialPrices.push(price);
 
-      const sc = scorePartial({ userEnchantsMap, inputStars10, sig, filters, strictQuality: q });
+      const sc = scoreAfterStrict({ userEnchantsMap, inputStars10, sig, filters });
       if (!sc) continue;
-
 
       candidates.push({
         uuid: r.uuid,
@@ -662,45 +568,38 @@ app.get("/api/recommend", async (req, res) => {
         ended_ts: Number(r.ended_ts) || 0,
         signature: sig,
 
+        dstars: sigDungeonStars(sig),
+        mstars: sigMasterStars(sig),
+        stars10: sigStars10(sig),
 
-        dstars: sig ? sigDungeonStars(sig) : 0,
-        mstars: sig ? sigMasterStars(sig) : 0,
-        stars10: sig ? sigStars10(sig) : 0,
-
-
-        wi: sig ? sigWI(sig) : false,
-        dye: sig ? sigDye(sig) : "none",
-        skin: sig ? sigSkin(sig) : "none",
-        petskin: sig ? sigPetSkin(sig) : "none",
-        petLevel: sig ? sigPetLevel(sig) : 0,
-        petItem: sig ? sigPetItem(sig) : "none",
-
+        wi: sigWI(sig),
+        dye: sigDye(sig),
+        skin: sigSkin(sig),
+        petskin: sigPetSkin(sig),
+        petLevel: sigPetLevel(sig),
+        petItem: sigPetItem(sig),
 
         score: sc.score,
         matched: sc.matched,
-        allEnchants: sig
-          ? Array.from(sc.saleEnchants.entries()).map(([k, v]) => ({
-              tier: tierFor(k, v),
-              label: displayEnchant(k, v),
-            }))
-          : [],
+        allEnchants: Array.from(sc.saleEnchants.entries()).map(([k, v]) => ({
+          tier: tierFor(k, v),
+          label: displayEnchant(k, v),
+        })),
         unverifiable: sc.unverifiable,
+        quality: q,
       });
     }
 
-
     candidates.sort((a, b) => (b.score - a.score) || (a.final_price - b.final_price));
     const top3 = candidates.slice(0, 3);
-
 
     const pricePool = perfectPrices.length ? perfectPrices : partialPrices;
     const med = pricePool.length ? median(pricePool) : null;
     const rangeLow = pricePool.length ? Math.min(...pricePool) : null;
     const rangeHigh = pricePool.length ? Math.max(...pricePool) : null;
 
-
     /* =========================
-       LIVE BIN
+       LIVE BIN (LBIN)
     ========================= */
     const { rows: liveRows } = await pool.query(
       `
@@ -717,15 +616,12 @@ app.get("/api/recommend", async (req, res) => {
       [itemKey, now - 10 * 60 * 1000]
     );
 
-
     let bestPerfect = null;
     let bestPartial = null;
-
 
     for (const a of liveRows) {
       const price = Number(a.starting_bid || 0);
       if (!Number.isFinite(price) || price <= 0) continue;
-
 
       let sig = String(a.signature || "").trim();
       if (!sig) {
@@ -738,33 +634,27 @@ app.get("/api/recommend", async (req, res) => {
           })) || ""
         ).trim();
       }
-
+      if (!sig) continue;
 
       const q = strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters });
       if (q === "NONE") continue;
 
-
-      const sc = scorePartial({ userEnchantsMap, inputStars10, sig, filters });
+      const sc = scoreAfterStrict({ userEnchantsMap, inputStars10, sig, filters });
       if (!sc) continue;
-
 
       const cand = {
         uuid: a.uuid,
         item_name: stripStarGlyphs(a.item_name),
         price,
-        bin: true,
-        start_ts: Number(a.start_ts || 0),
-        end_ts: Number(a.end_ts || 0),
         signature: sig,
-        dstars: sig ? sigDungeonStars(sig) : 0,
-        mstars: sig ? sigMasterStars(sig) : 0,
-        stars10: sig ? sigStars10(sig) : 0,
-        petItem: sig ? sigPetItem(sig) : "none",
+        dstars: sigDungeonStars(sig),
+        mstars: sigMasterStars(sig),
+        stars10: sigStars10(sig),
+        petItem: sigPetItem(sig),
         score: sc.score,
         matched: sc.matched,
         quality: q,
       };
-
 
       if (q === "PERFECT") {
         if (!bestPerfect || cand.price < bestPerfect.price) bestPerfect = cand;
@@ -773,14 +663,11 @@ app.get("/api/recommend", async (req, res) => {
       }
     }
 
-
     const liveBest = bestPerfect || bestPartial || null;
-
 
     const note = candidates.length
       ? null
-      : "No sales found that pass verified filters in the selected history window.";
-
+      : "No sales found that match (diff>=2 is excluded) within the selected history window.";
 
     return res.json({
       recommended: med,
@@ -798,7 +685,6 @@ app.get("/api/recommend", async (req, res) => {
   }
 });
 
-
 /* =========================
    /api/items (DEDUPED + match anywhere)
 ========================= */
@@ -807,26 +693,21 @@ app.get("/api/items", async (req, res) => {
   const qNorm = normKey(qRaw);
   if (!qNorm) return res.json({ items: [] });
 
-
   const LIMIT = Math.max(10, Math.min(80, Number(req.query.limit || 40)));
   const since = Date.now() - 120 * 24 * 60 * 60 * 1000;
-
 
   const tokens = qNorm.split(" ").filter(Boolean).slice(0, 6);
   if (!tokens.length) return res.json({ items: [] });
 
-
   const whereParts = [];
   const params = [since];
   let idx = 2;
-
 
   for (const t of tokens) {
     whereParts.push(`(item_key ILIKE $${idx} OR item_name ILIKE $${idx})`);
     params.push(`%${t}%`);
     idx++;
   }
-
 
   try {
     const { rows } = await pool.query(
@@ -842,7 +723,6 @@ app.get("/api/items", async (req, res) => {
       params
     );
 
-
     const seen = new Set();
     const out = [];
     for (const r of rows) {
@@ -855,32 +735,27 @@ app.get("/api/items", async (req, res) => {
       if (out.length >= LIMIT) break;
     }
 
-
     return res.json({ items: out });
   } catch (e) {
     return res.status(500).json({ error: e.message });
   }
 });
 
-
 /* =========================
-   Enchant autocomplete (same)
+   Enchant autocomplete
 ========================= */
 const ENCHANT_CATALOG = getEnchantCatalog();
-
-
-// Normalize once for fast searching (and keep display labels consistent)
 const ENCHANT_CATALOG_NORM = ENCHANT_CATALOG.map((e) => ({
   name: e.name,
   key: normKey(e.name),
   min: e.min,
   max: e.max,
 }));
+
 app.get("/api/enchants", (req, res) => {
   const q = normKey(req.query.q || "");
   const LIMIT = Math.max(5, Math.min(60, Number(req.query.limit || 30)));
   if (!q) return res.json({ items: [] });
-
 
   const items = [];
   for (const e of ENCHANT_CATALOG_NORM) {
@@ -893,7 +768,6 @@ app.get("/api/enchants", (req, res) => {
   }
   return res.json({ items });
 });
-
 
 /* =========================
    Cosmetics endpoints + health
@@ -918,13 +792,10 @@ app.get("/api/petskins", (req, res) => {
 });
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
-
 /* =========================
-   Boot + sync
+   Boot
 ========================= */
 const PORT = Number(process.env.PORT || 8080);
-
-
-app.listen(PORT, "0.0.0.0", async () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
