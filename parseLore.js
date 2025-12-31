@@ -69,8 +69,8 @@ const REFORGE_PREFIXES = new Set([
   // bows
   "hasty","precise","rapid","spiritual","fine","neat","grand","awkward","rich","headstrong","unreal",
   // weapons
-  "fabled","withered","heroic","spicy","sharp","legendary","dirty","fanged","suspicious","bulky",
-  "gilded","warped","coldfused","fair","gentle","odd","fast","jerry's","shiny",
+  "fabled","withered","heroic","spicy","sharp","legendary","dirty","fanged","suspicious","shiny","bulky",
+  "gilded","warped","coldfused","fair","gentle","odd","fast","jerry's",
   // armor
   "ancient","giant","perfect","renowned","jaded","loving","necrotic","empowered","spiked","cubic",
   "hyper","submerged","pure","smart","clean","fierce","heavy","light","wise","titanic","mythic","waxed",
@@ -90,7 +90,7 @@ function tokenize(s) {
 
 function stripReforgePrefixTokens(tokens) {
   const t = Array.isArray(tokens) ? tokens.slice() : tokenize(tokens);
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 4; i++) {
     if (t.length > 1 && REFORGE_PREFIXES.has(t[0])) t.shift();
     else break;
   }
@@ -595,23 +595,24 @@ function extractEnchants(extra) {
 
 
 function extractStars(extra) {
-  const d = Number(extra?.dungeon_item_level ?? 0);
-  const u = Number(extra?.upgrade_level ?? 0);
+  // Hypixel data is inconsistent:
+  // - sometimes dungeon_item_level is 0..5 (dungeon stars)
+  // - sometimes it is 0..10 (total stars incl. master)
+  // - sometimes upgrade_level is 0..10 (total)
+  const dRaw = Number(extra?.dungeon_item_level ?? 0);
+  const uRaw = Number(extra?.upgrade_level ?? 0);
 
+  const d = Number.isFinite(dRaw) ? Math.max(0, Math.min(10, Math.trunc(dRaw))) : 0;
+  const u = Number.isFinite(uRaw) ? Math.max(0, Math.min(10, Math.trunc(uRaw))) : 0;
 
-  const dstars = Number.isFinite(d) ? Math.max(0, Math.min(5, Math.trunc(d))) : 0;
+  const total = Math.max(d, u); // best guess total stars (0..10)
 
+  if (total <= 0) return { dstars: 0, mstars: 0 };
+  if (total <= 5) return { dstars: total, mstars: 0 };
 
-  let mstars = 0;
-  if (Number.isFinite(u)) {
-    const total = Math.max(0, Math.min(10, Math.trunc(u)));
-    if (total > 5) mstars = total - 5;
-    if (!dstars && total <= 5) return { dstars: total, mstars: 0 };
-  }
-
-
-  return { dstars, mstars };
+  return { dstars: 5, mstars: Math.max(0, Math.min(5, total - 5)) };
 }
+
 
 
 function extractPetLevel(extra, itemName) {
