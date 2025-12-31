@@ -81,6 +81,29 @@ function sigGet(sig, key) {
 }
 
 
+
+function parseStarsFromText(itemName) {
+  const s = String(itemName || "");
+  const starCount = (s.match(/✪/g) || []).length;
+  const ding = { "➊":1,"➋":2,"➌":3,"➍":4,"➎":5,"❶":1,"❷":2,"❸":3,"❹":4,"❺":5 };
+  let mstars = 0;
+  for (const ch of s) if (ding[ch]) mstars = Math.max(mstars, ding[ch]);
+  if (mstars > 0) return { dstars: 5, mstars };
+  if (starCount > 5) return { dstars: 5, mstars: Math.min(5, starCount - 5) };
+  return { dstars: Math.min(5, starCount), mstars: 0 };
+}
+
+function patchSigStars(sig, itemName) {
+  const { dstars, mstars } = parseStarsFromText(itemName);
+  // If no stars shown in text, don't override legacy sig
+  if ((dstars || 0) === 0 && (mstars || 0) === 0) return sig;
+  const parts = String(sig || "").split("|").filter(Boolean);
+  const kept = parts.filter(p => !p.startsWith("dstars:") && !p.startsWith("mstars:"));
+  kept.push(`dstars:${dstars}`);
+  kept.push(`mstars:${mstars}`);
+  return kept.join("|");
+}
+
 function sigDungeonStars(sig) {
   return Math.max(0, Math.min(5, Number(sigGet(sig, "dstars")) || 0));
 }
@@ -526,7 +549,7 @@ function scorePartial({ userEnchantsMap, inputStars10, sig, filters }) {
     if (!inTier || !saTier || inTier === "MISC" || saTier === "MISC") continue;
 
 
-    const diff = Math.abs(saleLvl - inL);
+    const diff = Math.abs(tierRank(saTier) - tierRank(inTier));
 
 
     let tierLabel = "MISC";
@@ -628,7 +651,8 @@ app.get("/api/recommend", async (req, res) => {
       if (!Number.isFinite(price) || price <= 0) continue;
 
 
-      const sig = String(r.signature || "").trim();
+      let sig = String(r.signature || "").trim();
+      sig = patchSigStars(sig, r.item_name);
 
 
       const q = strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters });
@@ -713,6 +737,7 @@ app.get("/api/recommend", async (req, res) => {
 
 
       let sig = String(a.signature || "").trim();
+      sig = patchSigStars(sig, a.item_name);
       if (!sig) {
         sig = String(
           (await buildSignature({
