@@ -526,24 +526,25 @@ function scorePartial({ userEnchantsMap, inputStars10, sig, filters }) {
     if (!inTier || !saTier || inTier === "MISC" || saTier === "MISC") continue;
 
 
-    const lvlDiff = Math.abs(saleLvl - inL);
+    const diff = Math.abs(tierRank(saTier) - tierRank(inTier));
 
-// Strict enchant-level matching rules:
-// diff 0 => PERFECT (gold)
-// diff 1 => PARTIAL (purple)
-// diff >=2 => NOT A MATCH (reject this sale for echoes/pricing)
-let tierLabel = "MISC";
-let add = 0;
 
-if (lvlDiff === 0) {
-  tierLabel = "AAA";
-  add = W_EXACT_ENCHANT;
-} else if (lvlDiff === 1) {
-  tierLabel = "PARTIAL";
-  add = W_PARTIAL_ENCHANT;
-} else {
-  return null;
-}
+    let tierLabel = "MISC";
+    let add = 0;
+
+
+    if (diff === 0) {
+      tierLabel = inTier;
+      add = tierBonusForTier(inTier) + 1.2;
+    } else if (diff === 1) {
+      tierLabel = "PARTIAL";
+      add = 1.0;
+    } else {
+      tierLabel = "MISC";
+      add = 0;
+    }
+
+
     add *= 1 + Math.min(10, Math.max(0, inL - 1)) * 0.08;
 
 
