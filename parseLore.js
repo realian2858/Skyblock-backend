@@ -67,7 +67,7 @@ function stripVariantDigits(s) {
 ========================= */
 const REFORGE_PREFIXES = new Set([
   // bows
-  "hasty","precise","rapid","spiritual","fine","neat","grand","awkward","rich","headstrong","unreal",
+  "hasty","precise","rapid","spiritual","fine","neat","grand","awkward","rich","headstrong","unreal","shiny",
   // weapons
   "fabled","withered","heroic","spicy","sharp","legendary","dirty","fanged","suspicious","bulky",
   "gilded","warped","coldfused","fair","gentle","odd","fast","jerry's",
@@ -601,30 +601,16 @@ function extractStars(extra) {
   const dFinite = Number.isFinite(dRaw) ? Math.trunc(dRaw) : 0;
   const uFinite = Number.isFinite(uRaw) ? Math.trunc(uRaw) : 0;
 
-  // Hypixel is inconsistent:
-  // - some items store TOTAL stars (0–10) in dungeon_item_level
-  // - some store 0–5 there and use upgrade_level for total (0–10)
+  // Hypixel is inconsistent about where total stars live:
+  // - dungeon_item_level might be total (0–10)
+  // - upgrade_level might be total (0–10)
+  // - master-starred gear can show (dungeon_item_level=10, upgrade_level=5)
   //
-  // We normalize to:
+  // Normalize by taking the max as "total stars", then split into:
   //   dstars: 0–5 (dungeon stars)
   //   mstars: 0–5 (master stars)
-  //
-  // If dungeon_item_level looks like a total (6–10) and upgrade_level is missing/0,
-  // treat dungeon_item_level as the total.
-  if (dFinite > 5 && uFinite <= 0) {
-    const total = Math.max(0, Math.min(10, dFinite));
-    return { dstars: Math.min(5, total), mstars: Math.max(0, total - 5) };
-  }
-
-  const dstars = Math.max(0, Math.min(5, dFinite));
-
-  // Prefer upgrade_level if present (it represents total 0–10)
-  if (uFinite > 0) {
-    const total = Math.max(0, Math.min(10, uFinite));
-    return { dstars: Math.min(5, total), mstars: Math.max(0, total - 5) };
-  }
-
-  return { dstars, mstars: 0 };
+  const total = Math.max(0, Math.min(10, Math.max(dFinite, uFinite)));
+  return { dstars: Math.min(5, total), mstars: Math.max(0, total - 5) };
 }
 
 
