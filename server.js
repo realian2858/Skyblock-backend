@@ -787,24 +787,20 @@ app.get("/api/recommend", async (req, res) => {
        (ONLY THIS SECTION IS CHANGED)
     ========================= */
 
-        /* =========================
-       LIVE BIN (LBIN)
-       - cheapest PERFECT else cheapest PARTIAL
-       - resilient to bad/missing item_key (reforges/stars/etc)
-    ========================= */
-
-        /* =========================
+         /* =========================
        LIVE BIN (LBIN)
        - cheapest PERFECT else cheapest PARTIAL
        (ONLY THIS SECTION IS CHANGED)
-       - IMPORTANT: do NOT rely on last_seen_ts for "liveness" if ingest isn't updating it.
-         Prefer end_ts >= now (ms) which is the real auction end time.
     ========================= */
 
-    const LIVE_WINDOW_MS = 30 * 60 * 1000;
-    const liveCutoff = now - LIVE_WINDOW_MS;
+    // Use DB time so LBIN doesn't break from clock skew or stale last_seen_ts.
+    const { rows: dbNowRows } = await pool.query(
+      `SELECT (EXTRACT(EPOCH FROM NOW()) * 1000)::bigint AS now_ms`
+    );
+    const dbNow = Number(dbNowRows?.[0]?.now_ms || 0);
 
-    // Pull a larger pool and verify in JS, since item_key can be dirty/missing.
+    // If end_ts is correct (you showed live_bin_end_future is populated),
+    // this is the most reliable "is still live" filter.
     const { rows: liveRows } = await pool.query(
       `
       SELECT uuid, item_name, item_key, bin, start_ts, end_ts, starting_bid,
@@ -812,16 +808,7 @@ app.get("/api/recommend", async (req, res) => {
       FROM auctions
       WHERE is_ended = false
         AND bin = true
-        AND (
-          -- Primary "live" signal: auction end is in the future
-          (end_ts IS NOT NULL AND end_ts >= $2)
-          OR
-          -- Fallback if end_ts missing: last_seen_ts not too old
-          (end_ts IS NULL AND last_seen_ts IS NOT NULL AND last_seen_ts >= $2)
-          OR
-          -- Extra fallback if both are missing: allow it in and JS will filter/score
-          (end_ts IS NULL AND last_seen_ts IS NULL)
-        )
+        AND end_ts > $2
         AND (
           item_key = $1
           OR item_key IS NULL
@@ -830,7 +817,7 @@ app.get("/api/recommend", async (req, res) => {
       ORDER BY starting_bid ASC
       LIMIT 8000
       `,
-      [itemKey, liveCutoff, itemInput]
+      [itemKey, dbNow, itemInput]
     );
 
     let bestPerfect = null;
@@ -857,13 +844,7 @@ app.get("/api/recommend", async (req, res) => {
       }
 
       // If signature still missing, build a stars/tier-only fallback signature from the NAME.
-      if (!sig) {
-        sig = buildLbinFallbackSignature({
-          itemName: a.item_name || "",
-          tier: a.tier || "",
-        });
-      }
-
+      if (!sig) sig = buildLbinFallbackSignature({ itemName: a.item_name || "", tier: a.tier || "" });
       if (!sig) continue;
 
       const q = strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters });
@@ -909,6 +890,7 @@ app.get("/api/recommend", async (req, res) => {
     }
 
     const liveBest = bestPerfect || bestPartial || null;
+
 
 
 
@@ -1044,5 +1026,6 @@ const PORT = Number(process.env.PORT || 8080);
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
+
 
 
