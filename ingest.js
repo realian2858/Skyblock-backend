@@ -397,6 +397,7 @@ await forceEndByTime(now);
     upserted += await upsertAuctionsBulk(data.auctions || [], now);
     if (PAGE_DELAY_MS > 0) await sleep(PAGE_DELAY_MS);
     
+  }
     async function forceEndByTime(now) {
   const { rowCount } = await pool.query(
     `
@@ -410,9 +411,6 @@ await forceEndByTime(now);
   );
   console.log(`🧹 forceEndByTime ended: ${rowCount}`);
 }
-
-  }
-
   // 🔥 KEY LBIN FIX: end auctions that weren't seen in this full snapshot
   await markNotSeenInSnapshotAsEnded(now);
 
@@ -474,6 +472,7 @@ main()
     console.error("INGEST FAILED", err);
     process.exit(1);
   });
+
 
 
 
