@@ -373,6 +373,10 @@ async function backfillSalesItemKeys({ batch = 20000 } = {}) {
 export async function syncOnce() {
   const now = Date.now();
 
+// ... your fetch + upserts + markNotSeenInSnapshotAsEnded ...
+
+await forceEndByTime(now);
+
   const first = await fetchPage(0);
   const totalPages = Math.max(1, Number(first.totalPages || 1));
   console.log(`📦 Sync: ${totalPages} pages`);
@@ -451,5 +455,6 @@ export async function rebuildAllSalesItemKeys(batch = 50000) {
     client.release();
   }
 }
+
 
 
