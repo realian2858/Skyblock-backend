@@ -786,20 +786,56 @@ app.get("/api/recommend", async (req, res) => {
        - cheapest PERFECT else cheapest PARTIAL
        (ONLY THIS SECTION IS CHANGED)
     ========================= */
-    const { rows: liveRows } = await pool.query(
-      `
-      SELECT uuid, item_name, item_key, bin, start_ts, end_ts, starting_bid,
-             tier, signature, item_lore, item_bytes, last_seen_ts
-      FROM auctions
-      WHERE is_ended = false
-        AND bin = true
-        AND item_key = $1
-        AND last_seen_ts >= $2
-      ORDER BY starting_bid ASC
-      LIMIT 3000
-      `,
-      [itemKey, now - 10 * 60 * 1000]
-    );
+        /* =========================
+       LIVE BIN (LBIN)
+       - cheapest PERFECT else cheapest PARTIAL
+       - IMPORTANT: be resilient to bad/missing item_key in live rows
+    ========================= */
+
+    // Give LBIN a bit more breathing room; if ingest isn't running, this will still be empty.
+    const LIVE_WINDOW_MS = 30 * 60 * 1000;
+
+    // 1) Primary query: prefer exact item_key, but ALSO allow NULL item_key
+    //    and name matches (because many auctions come in with odd formatting).
+    let liveRows = (
+      await pool.query(
+        `
+        SELECT uuid, item_name, item_key, bin, start_ts, end_ts, starting_bid,
+               tier, signature, item_lore, item_bytes, last_seen_ts
+        FROM auctions
+        WHERE is_ended = false
+          AND bin = true
+          AND last_seen_ts >= $2
+          AND (
+            item_key = $1
+            OR item_key IS NULL
+            OR item_name ILIKE ('%' || $3 || '%')
+          )
+        ORDER BY starting_bid ASC
+        LIMIT 5000
+        `,
+        [itemKey, now - LIVE_WINDOW_MS, itemInput]
+      )
+    ).rows;
+
+    // 2) Fallback query: if nothing came back, broaden once more (still capped)
+    if (!liveRows || liveRows.length === 0) {
+      liveRows = (
+        await pool.query(
+          `
+          SELECT uuid, item_name, item_key, bin, start_ts, end_ts, starting_bid,
+                 tier, signature, item_lore, item_bytes, last_seen_ts
+          FROM auctions
+          WHERE is_ended = false
+            AND bin = true
+            AND last_seen_ts >= $1
+          ORDER BY starting_bid ASC
+          LIMIT 8000
+          `,
+          [now - LIVE_WINDOW_MS]
+        )
+      ).rows;
+    }
 
     let bestPerfect = null;
     let bestPartial = null;
@@ -808,7 +844,10 @@ app.get("/api/recommend", async (req, res) => {
       const price = Number(a.starting_bid || 0);
       if (!Number.isFinite(price) || price <= 0) continue;
 
-      // Build/Use signature if possible
+      // ✅ JS-side canonical verification (handles NULL/dirty item_key rows)
+      const aKey = canonicalItemKey(a.item_key || a.item_name || "");
+      if (aKey !== itemKey) continue;
+
       let sig = String(a.signature || "").trim();
       if (!sig) {
         sig = String(
@@ -820,6 +859,56 @@ app.get("/api/recommend", async (req, res) => {
           })) || ""
         ).trim();
       }
+
+      // If signature still missing, build a stars/tier-only fallback signature from the NAME.
+      if (!sig) sig = buildLbinFallbackSignature({ itemName: a.item_name || "", tier: a.tier || "" });
+
+      if (!sig) continue;
+
+      const q = strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters });
+      if (q === "NONE") continue;
+
+      const sc = scoreAfterStrict({ userEnchantsMap, inputStars10, sig, filters });
+      if (!sc) continue;
+
+      // Fix false [M#] tags in LIVE rows: trust glyph-derived stars when present.
+      const derived = deriveStarsFromName(a.item_name || "");
+      const shownDstars = derived ? derived.dstars : sigDungeonStars(sig);
+      const shownMstars = derived ? derived.mstars : sigMasterStars(sig);
+      const shownStars10 = Math.max(0, Math.min(10, (shownDstars || 0) + (shownMstars || 0)));
+
+      const allEnchantsRaw = Array.from(sc.saleEnchants.entries()).map(([k, v]) => ({
+        tier: tierFor(k, v),
+        label: displayEnchant(k, v),
+      }));
+
+      const cand = {
+        uuid: a.uuid,
+        item_name: stripStarGlyphs(a.item_name),
+        price,
+        bin: true,
+        signature: sig,
+
+        dstars: shownDstars,
+        mstars: shownMstars,
+        stars10: shownStars10,
+
+        petItem: sigPetItem(sig),
+        score: sc.score,
+        matched: sc.matched,
+        allEnchants: sortEnchantsForDisplay(allEnchantsRaw),
+        quality: q,
+      };
+
+      if (q === "PERFECT") {
+        if (!bestPerfect || cand.price < bestPerfect.price) bestPerfect = cand;
+      } else {
+        if (!bestPartial || cand.price < bestPartial.price) bestPartial = cand;
+      }
+    }
+
+    const liveBest = bestPerfect || bestPartial || null;
+
 
       // ✅ Critical: do NOT skip LBIN just because sig is missing.
       // Use tier+stars fallback from the NAME (prevents missing LBIN entirely).
@@ -1006,3 +1095,4 @@ const PORT = Number(process.env.PORT || 8080);
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
+
