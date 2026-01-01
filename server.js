@@ -786,17 +786,10 @@ app.get("/api/recommend", async (req, res) => {
        - cheapest PERFECT else cheapest PARTIAL
        (ONLY THIS SECTION IS CHANGED)
     ========================= */
-        /* =========================
-       LIVE BIN (LBIN)
-       - cheapest PERFECT else cheapest PARTIAL
-       - IMPORTANT: be resilient to bad/missing item_key in live rows
-    ========================= */
 
-    // Give LBIN a bit more breathing room; if ingest isn't running, this will still be empty.
     const LIVE_WINDOW_MS = 30 * 60 * 1000;
 
-    // 1) Primary query: prefer exact item_key, but ALSO allow NULL item_key
-    //    and name matches (because many auctions come in with odd formatting).
+    // Primary query: exact key OR null/dirty key via name contains
     let liveRows = (
       await pool.query(
         `
@@ -818,7 +811,7 @@ app.get("/api/recommend", async (req, res) => {
       )
     ).rows;
 
-    // 2) Fallback query: if nothing came back, broaden once more (still capped)
+    // Fallback query: widen once, still capped
     if (!liveRows || liveRows.length === 0) {
       liveRows = (
         await pool.query(
@@ -844,7 +837,6 @@ app.get("/api/recommend", async (req, res) => {
       const price = Number(a.starting_bid || 0);
       if (!Number.isFinite(price) || price <= 0) continue;
 
-      // ✅ JS-side canonical verification (handles NULL/dirty item_key rows)
       const aKey = canonicalItemKey(a.item_key || a.item_name || "");
       if (aKey !== itemKey) continue;
 
@@ -860,9 +852,8 @@ app.get("/api/recommend", async (req, res) => {
         ).trim();
       }
 
-      // If signature still missing, build a stars/tier-only fallback signature from the NAME.
+      // Critical: if still missing, use tier+stars fallback from NAME
       if (!sig) sig = buildLbinFallbackSignature({ itemName: a.item_name || "", tier: a.tier || "" });
-
       if (!sig) continue;
 
       const q = strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters });
@@ -871,7 +862,6 @@ app.get("/api/recommend", async (req, res) => {
       const sc = scoreAfterStrict({ userEnchantsMap, inputStars10, sig, filters });
       if (!sc) continue;
 
-      // Fix false [M#] tags in LIVE rows: trust glyph-derived stars when present.
       const derived = deriveStarsFromName(a.item_name || "");
       const shownDstars = derived ? derived.dstars : sigDungeonStars(sig);
       const shownMstars = derived ? derived.mstars : sigMasterStars(sig);
@@ -897,60 +887,6 @@ app.get("/api/recommend", async (req, res) => {
         score: sc.score,
         matched: sc.matched,
         allEnchants: sortEnchantsForDisplay(allEnchantsRaw),
-        quality: q,
-      };
-
-      if (q === "PERFECT") {
-        if (!bestPerfect || cand.price < bestPerfect.price) bestPerfect = cand;
-      } else {
-        if (!bestPartial || cand.price < bestPartial.price) bestPartial = cand;
-      }
-    }
-
-    const liveBest = bestPerfect || bestPartial || null;
-
-
-      // ✅ Critical: do NOT skip LBIN just because sig is missing.
-      // Use tier+stars fallback from the NAME (prevents missing LBIN entirely).
-      if (!sig) sig = buildLbinFallbackSignature({ itemName: a.item_name || "", tier: a.tier || "" });
-      if (!sig) continue;
-
-      // Strict matching & scoring (unchanged logic)
-      const q = strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters });
-      if (q === "NONE") continue;
-
-      const sc = scoreAfterStrict({ userEnchantsMap, inputStars10, sig, filters });
-      if (!sc) continue;
-
-      // ✅ Fix false [M#] tags in LIVE display: derive stars from NAME when possible
-      const derived = deriveStarsFromName(a.item_name || "");
-      const shownDstars = derived ? derived.dstars : sigDungeonStars(sig);
-      const shownMstars = derived ? derived.mstars : sigMasterStars(sig);
-      const shownStars10 = Math.max(0, Math.min(10, (shownDstars || 0) + (shownMstars || 0)));
-
-      const allEnchantsRaw = Array.from(sc.saleEnchants.entries()).map(([k, v]) => ({
-        tier: tierFor(k, v),
-        label: displayEnchant(k, v),
-      }));
-
-      const cand = {
-        uuid: a.uuid,
-        item_name: stripStarGlyphs(a.item_name),
-        price,
-        bin: true,
-        signature: sig,
-
-        dstars: shownDstars,
-        mstars: shownMstars,
-        stars10: shownStars10,
-
-        petItem: sigPetItem(sig),
-        score: sc.score,
-        matched: sc.matched,
-
-        // keep consistent with sales ordering
-        allEnchants: sortEnchantsForDisplay(allEnchantsRaw),
-
         quality: q,
       };
 
@@ -1095,4 +1031,3 @@ const PORT = Number(process.env.PORT || 8080);
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
-
