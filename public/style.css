@@ -1056,5 +1056,31 @@ select option{
   border: 1px solid rgba(255,255,255,.14);
   background: rgba(0,0,0,.28);
 }
+/* --- Remove the blue AUCTION TOOLKIT bar --- */
+.browse-title{
+  display: none;
+}
+
+/* Optional: make the whole browse header less “boxed” */
+.browse{
+  box-shadow: none;
+  border: 1px solid rgba(255,255,255,.06);
+}
+
+/* --- Make the Quick Jump buttons (left sidebar) plain --- */
+.col-left .btn-primary,
+.col-left .btn{
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.06);
+  color: rgba(255,255,255,.92);
+  box-shadow: none;
+}
+
+.col-left .btn-primary:hover,
+.col-left .btn:hover{
+  background: rgba(255,255,255,.10);
+  transform: translateY(-1px);
+}
+
 
 
