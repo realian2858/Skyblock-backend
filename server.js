@@ -787,48 +787,30 @@ app.get("/api/recommend", async (req, res) => {
        (ONLY THIS SECTION IS CHANGED)
     ========================= */
 
+        /* =========================
+       LIVE BIN (LBIN)
+       - cheapest PERFECT else cheapest PARTIAL
+       - resilient to bad/missing item_key (reforges/stars/etc)
+    ========================= */
+
     const LIVE_WINDOW_MS = 30 * 60 * 1000;
 
-    // Primary query: exact key OR null/dirty key via name contains
-    let liveRows = (
-      await pool.query(
-        `
-        SELECT uuid, item_name, item_key, bin, start_ts, end_ts, starting_bid,
-               tier, signature, item_lore, item_bytes, last_seen_ts
-        FROM auctions
-        WHERE is_ended = false
-          AND bin = true
-          AND last_seen_ts >= $2
-          AND (
-            item_key = $1
-            OR item_key IS NULL
-            OR item_name ILIKE ('%' || $3 || '%')
-          )
-        ORDER BY starting_bid ASC
-        LIMIT 5000
-        `,
-        [itemKey, now - LIVE_WINDOW_MS, itemInput]
-      )
-    ).rows;
-
-    // Fallback query: widen once, still capped
-    if (!liveRows || liveRows.length === 0) {
-      liveRows = (
-        await pool.query(
-          `
-          SELECT uuid, item_name, item_key, bin, start_ts, end_ts, starting_bid,
-                 tier, signature, item_lore, item_bytes, last_seen_ts
-          FROM auctions
-          WHERE is_ended = false
-            AND bin = true
-            AND last_seen_ts >= $1
-          ORDER BY starting_bid ASC
-          LIMIT 8000
-          `,
-          [now - LIVE_WINDOW_MS]
-        )
-      ).rows;
-    }
+    // Pull a reasonable pool of cheapest BINs recently seen.
+    // IMPORTANT: we intentionally do NOT require item_key=$1 here,
+    // because live rows often have dirty/mismatched item_key.
+    const { rows: liveRows } = await pool.query(
+      `
+      SELECT uuid, item_name, item_key, bin, start_ts, end_ts, starting_bid,
+             tier, signature, item_lore, item_bytes, last_seen_ts
+      FROM auctions
+      WHERE is_ended = false
+        AND bin = true
+        AND last_seen_ts >= $1
+      ORDER BY starting_bid ASC
+      LIMIT 8000
+      `,
+      [now - LIVE_WINDOW_MS]
+    );
 
     let bestPerfect = null;
     let bestPartial = null;
@@ -837,9 +819,11 @@ app.get("/api/recommend", async (req, res) => {
       const price = Number(a.starting_bid || 0);
       if (!Number.isFinite(price) || price <= 0) continue;
 
+      // ✅ Canonical verification *in JS* (handles dirty item_key + reforges + stars)
       const aKey = canonicalItemKey(a.item_key || a.item_name || "");
       if (aKey !== itemKey) continue;
 
+      // Signature (prefer stored; otherwise build; otherwise fallback stars/tier)
       let sig = String(a.signature || "").trim();
       if (!sig) {
         sig = String(
@@ -851,8 +835,6 @@ app.get("/api/recommend", async (req, res) => {
           })) || ""
         ).trim();
       }
-
-      // Critical: if still missing, use tier+stars fallback from NAME
       if (!sig) sig = buildLbinFallbackSignature({ itemName: a.item_name || "", tier: a.tier || "" });
       if (!sig) continue;
 
@@ -862,6 +844,7 @@ app.get("/api/recommend", async (req, res) => {
       const sc = scoreAfterStrict({ userEnchantsMap, inputStars10, sig, filters });
       if (!sc) continue;
 
+      // Trust glyph-derived stars for LIVE display when possible
       const derived = deriveStarsFromName(a.item_name || "");
       const shownDstars = derived ? derived.dstars : sigDungeonStars(sig);
       const shownMstars = derived ? derived.mstars : sigMasterStars(sig);
@@ -898,6 +881,7 @@ app.get("/api/recommend", async (req, res) => {
     }
 
     const liveBest = bestPerfect || bestPartial || null;
+
 
     /* =========================
        Response (fields unchanged)
@@ -1031,3 +1015,4 @@ const PORT = Number(process.env.PORT || 8080);
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
+
