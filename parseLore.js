@@ -119,7 +119,7 @@ const REFORGE_PREFIXES = new Set([
   "hasty","precise","rapid","spiritual","fine","neat","grand","awkward","rich","headstrong","unreal",
   // weapons
   "fabled","withered","heroic","spicy","sharp","legendary","dirty","fanged","suspicious","bulky",
-  "gilded","warped","coldfused","fair","gentle","odd","fast","jerry's",
+  "gilded","warped","coldfused","fair","gentle","odd","fast","jerry's", "epic",
   // armor
   "ancient","giant","perfect","renowned","jaded","loving","necrotic","empowered","spiked","cubic",
   "hyper","submerged","pure","smart","clean","fierce","heavy","light","wise","titanic","mythic","waxed",
@@ -790,5 +790,6 @@ export async function buildSignature({ itemName = "", lore = "", tier = "", item
 
   return [...parts, ...enchTokens].join("|");
 }
+
 
 
