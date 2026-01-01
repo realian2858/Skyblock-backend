@@ -10,6 +10,7 @@
 console.log("INGEST START", new Date().toISOString());
 console.log("HAS_DATABASE_URL", !!process.env.DATABASE_URL);
 console.log("HAS_HYPIXEL_KEY", !!process.env.HYPIXEL_API_KEY);
+console.log("DB_URL_TAIL", String(process.env.DATABASE_URL || "").slice(-16));
 
 import dotenv from "dotenv";
 import pg from "pg";
@@ -459,6 +460,7 @@ export async function rebuildAllSalesItemKeys(batch = 50000) {
     client.release();
   }
 }
+
 
 
 
