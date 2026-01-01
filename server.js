@@ -10,6 +10,7 @@
 // - cheapest PERFECT else cheapest PARTIAL
 // Recommended price:
 // - median(PERFECT) else median(PARTIAL) else null
+console.log("DB_URL_TAIL", String(process.env.DATABASE_URL || "").slice(-16));
 
 import path from "path";
 import { fileURLToPath } from "url";
@@ -1026,6 +1027,7 @@ const PORT = Number(process.env.PORT || 8080);
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
+
 
 
 
