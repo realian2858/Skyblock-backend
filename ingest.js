@@ -460,6 +460,21 @@ export async function rebuildAllSalesItemKeys(batch = 50000) {
     client.release();
   }
 }
+async function main() {
+  console.log("INGEST MAIN START");
+
+  await skyblock-ingest(); // <-- whatever your ingest function is named
+
+  console.log("INGEST MAIN DONE");
+}
+
+main()
+  .then(() => process.exit(0))
+  .catch(err => {
+    console.error("INGEST FAILED", err);
+    process.exit(1);
+  });
+
 
 
 
