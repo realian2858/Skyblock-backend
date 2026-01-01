@@ -7,6 +7,10 @@
 // ✅ Finalize ended -> sales in batches
 // ✅ No per-sync “rebuildSalesItemKeys” (that was killing speed + LBIN freshness)
 
+console.log("INGEST START", new Date().toISOString());
+console.log("HAS_DATABASE_URL", !!process.env.DATABASE_URL);
+console.log("HAS_HYPIXEL_KEY", !!process.env.HYPIXEL_API_KEY);
+
 import dotenv from "dotenv";
 import pg from "pg";
 import { canonicalItemKey, buildSignature } from "./parseLore.js";
@@ -455,6 +459,7 @@ export async function rebuildAllSalesItemKeys(batch = 50000) {
     client.release();
   }
 }
+
 
 
 
