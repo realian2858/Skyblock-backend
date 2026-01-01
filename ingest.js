@@ -387,6 +387,21 @@ export async function syncOnce() {
     const data = await fetchPage(p);
     upserted += await upsertAuctionsBulk(data.auctions || [], now);
     if (PAGE_DELAY_MS > 0) await sleep(PAGE_DELAY_MS);
+    
+    async function forceEndByTime(now) {
+  const { rowCount } = await pool.query(
+    `
+    UPDATE auctions
+    SET is_ended = true
+    WHERE is_ended = false
+      AND end_ts IS NOT NULL
+      AND end_ts < $1
+    `,
+    [now]
+  );
+  console.log(`🧹 forceEndByTime ended: ${rowCount}`);
+}
+
   }
 
   // 🔥 KEY LBIN FIX: end auctions that weren't seen in this full snapshot
@@ -436,4 +451,5 @@ export async function rebuildAllSalesItemKeys(batch = 50000) {
     client.release();
   }
 }
+
 
