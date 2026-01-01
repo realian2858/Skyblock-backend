@@ -463,7 +463,7 @@ export async function rebuildAllSalesItemKeys(batch = 50000) {
 async function main() {
   console.log("INGEST MAIN START");
 
-  await ingest.js(); // <-- whatever your ingest function is named
+  await syncOnce(); // <-- whatever your ingest function is named
 
   console.log("INGEST MAIN DONE");
 }
@@ -474,6 +474,7 @@ main()
     console.error("INGEST FAILED", err);
     process.exit(1);
   });
+
 
 
 
