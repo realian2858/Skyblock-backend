@@ -95,21 +95,40 @@ function parseCoins(input) {
 
 
 function formatCoins(n) {
-  if (!isFinite(n)) return "—";
-  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(n) + " coins";
-}
+  const x = Number(n);
+  if (!isFinite(x)) return "—";
 
+  const abs = Math.abs(x);
+  const sign = x < 0 ? "-" : "";
+
+  const trim2 = (v) => {
+    // 0–2 decimals, trim trailing zeros
+    return v.toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
+  };
+
+  if (abs >= 1e9) return `${sign}${trim2(abs / 1e9)}b`;
+  if (abs >= 1e6) return `${sign}${trim2(abs / 1e6)}m`;
+
+  // < 1m => just number (no k)
+  return `${sign}${Math.round(abs).toLocaleString("en-US")}`;
+}
 
 function formatShort(n) {
   const x = Number(n);
   if (!isFinite(x)) return "—";
+
   const abs = Math.abs(x);
-  if (abs >= 1e12) return (x / 1e12).toFixed(2).replace(/\.00$/, "") + "t";
-  if (abs >= 1e9)  return (x / 1e9).toFixed(2).replace(/\.00$/, "") + "b";
-  if (abs >= 1e6)  return (x / 1e6).toFixed(2).replace(/\.00$/, "") + "m";
-  if (abs >= 1e3)  return (x / 1e3).toFixed(2).replace(/\.00$/, "") + "k";
-  return String(Math.round(x));
+  const sign = x < 0 ? "-" : "";
+
+  const trim2 = (v) => {
+    return v.toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
+  };
+
+  if (abs >= 1e9) return `${sign}${trim2(abs / 1e9)}b`;
+  if (abs >= 1e6) return `${sign}${trim2(abs / 1e6)}m`;
+  return `${sign}${Math.round(abs).toLocaleString("en-US")}`;
 }
+
 
 
 function escapeHtml(s) {
@@ -1047,5 +1066,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   renderTop3Rail([]);
 });
+
 
 
