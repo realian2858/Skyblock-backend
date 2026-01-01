@@ -793,11 +793,18 @@ app.get("/api/recommend", async (req, res) => {
        - resilient to bad/missing item_key (reforges/stars/etc)
     ========================= */
 
-    const LIVE_WINDOW_MS = 30 * 60 * 1000;
+        /* =========================
+       LIVE BIN (LBIN)
+       - cheapest PERFECT else cheapest PARTIAL
+       (ONLY THIS SECTION IS CHANGED)
+       - IMPORTANT: do NOT rely on last_seen_ts for "liveness" if ingest isn't updating it.
+         Prefer end_ts >= now (ms) which is the real auction end time.
+    ========================= */
 
-    // Pull a reasonable pool of cheapest BINs recently seen.
-    // IMPORTANT: we intentionally do NOT require item_key=$1 here,
-    // because live rows often have dirty/mismatched item_key.
+    const LIVE_WINDOW_MS = 30 * 60 * 1000;
+    const liveCutoff = now - LIVE_WINDOW_MS;
+
+    // Pull a larger pool and verify in JS, since item_key can be dirty/missing.
     const { rows: liveRows } = await pool.query(
       `
       SELECT uuid, item_name, item_key, bin, start_ts, end_ts, starting_bid,
@@ -805,11 +812,25 @@ app.get("/api/recommend", async (req, res) => {
       FROM auctions
       WHERE is_ended = false
         AND bin = true
-        AND last_seen_ts >= $1
+        AND (
+          -- Primary "live" signal: auction end is in the future
+          (end_ts IS NOT NULL AND end_ts >= $2)
+          OR
+          -- Fallback if end_ts missing: last_seen_ts not too old
+          (end_ts IS NULL AND last_seen_ts IS NOT NULL AND last_seen_ts >= $2)
+          OR
+          -- Extra fallback if both are missing: allow it in and JS will filter/score
+          (end_ts IS NULL AND last_seen_ts IS NULL)
+        )
+        AND (
+          item_key = $1
+          OR item_key IS NULL
+          OR item_name ILIKE ('%' || $3 || '%')
+        )
       ORDER BY starting_bid ASC
       LIMIT 8000
       `,
-      [now - LIVE_WINDOW_MS]
+      [itemKey, liveCutoff, itemInput]
     );
 
     let bestPerfect = null;
@@ -819,11 +840,10 @@ app.get("/api/recommend", async (req, res) => {
       const price = Number(a.starting_bid || 0);
       if (!Number.isFinite(price) || price <= 0) continue;
 
-      // ✅ Canonical verification *in JS* (handles dirty item_key + reforges + stars)
+      // JS-side canonical verification (handles NULL/dirty item_key rows)
       const aKey = canonicalItemKey(a.item_key || a.item_name || "");
       if (aKey !== itemKey) continue;
 
-      // Signature (prefer stored; otherwise build; otherwise fallback stars/tier)
       let sig = String(a.signature || "").trim();
       if (!sig) {
         sig = String(
@@ -835,7 +855,15 @@ app.get("/api/recommend", async (req, res) => {
           })) || ""
         ).trim();
       }
-      if (!sig) sig = buildLbinFallbackSignature({ itemName: a.item_name || "", tier: a.tier || "" });
+
+      // If signature still missing, build a stars/tier-only fallback signature from the NAME.
+      if (!sig) {
+        sig = buildLbinFallbackSignature({
+          itemName: a.item_name || "",
+          tier: a.tier || "",
+        });
+      }
+
       if (!sig) continue;
 
       const q = strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters });
@@ -844,7 +872,7 @@ app.get("/api/recommend", async (req, res) => {
       const sc = scoreAfterStrict({ userEnchantsMap, inputStars10, sig, filters });
       if (!sc) continue;
 
-      // Trust glyph-derived stars for LIVE display when possible
+      // Fix false [M#] tags in LIVE rows: trust glyph-derived stars when present.
       const derived = deriveStarsFromName(a.item_name || "");
       const shownDstars = derived ? derived.dstars : sigDungeonStars(sig);
       const shownMstars = derived ? derived.mstars : sigMasterStars(sig);
@@ -881,6 +909,7 @@ app.get("/api/recommend", async (req, res) => {
     }
 
     const liveBest = bestPerfect || bestPartial || null;
+
 
 
     /* =========================
@@ -1015,4 +1044,5 @@ const PORT = Number(process.env.PORT || 8080);
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
+
 
