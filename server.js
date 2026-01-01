@@ -784,6 +784,7 @@ app.get("/api/recommend", async (req, res) => {
     /* =========================
        LIVE BIN (LBIN)
        - cheapest PERFECT else cheapest PARTIAL
+       (ONLY THIS SECTION IS CHANGED)
     ========================= */
     const { rows: liveRows } = await pool.query(
       `
@@ -807,9 +808,7 @@ app.get("/api/recommend", async (req, res) => {
       const price = Number(a.starting_bid || 0);
       if (!Number.isFinite(price) || price <= 0) continue;
 
-      // We already query exact item_key = $1, keep this lightweight
-      // (no canonical re-check needed)
-
+      // Build/Use signature if possible
       let sig = String(a.signature || "").trim();
       if (!sig) {
         sig = String(
@@ -822,21 +821,19 @@ app.get("/api/recommend", async (req, res) => {
         ).trim();
       }
 
-      // ✅ Critical LBIN fix:
-      // If signature still missing, build a *stars/tier only* fallback signature from the NAME.
-      // This allows star filtering + rarity filtering (tier) to work for live BINs.
+      // ✅ Critical: do NOT skip LBIN just because sig is missing.
+      // Use tier+stars fallback from the NAME (prevents missing LBIN entirely).
       if (!sig) sig = buildLbinFallbackSignature({ itemName: a.item_name || "", tier: a.tier || "" });
-
-      // If still empty, skip.
       if (!sig) continue;
 
+      // Strict matching & scoring (unchanged logic)
       const q = strictMatchQuality({ userEnchantsMap, inputStars10, sig, filters });
       if (q === "NONE") continue;
 
       const sc = scoreAfterStrict({ userEnchantsMap, inputStars10, sig, filters });
       if (!sc) continue;
 
-      // ✅ Fix false [M#] tags for LIVE rows by trusting glyph-derived stars when present.
+      // ✅ Fix false [M#] tags in LIVE display: derive stars from NAME when possible
       const derived = deriveStarsFromName(a.item_name || "");
       const shownDstars = derived ? derived.dstars : sigDungeonStars(sig);
       const shownMstars = derived ? derived.mstars : sigMasterStars(sig);
@@ -862,7 +859,7 @@ app.get("/api/recommend", async (req, res) => {
         score: sc.score,
         matched: sc.matched,
 
-        // ✅ Include full enchants for LIVE cards too (and sort by tier priority)
+        // keep consistent with sales ordering
         allEnchants: sortEnchantsForDisplay(allEnchantsRaw),
 
         quality: q,
